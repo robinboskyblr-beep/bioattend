@@ -37,14 +37,17 @@ if not firebase_admin._apps:
         # Local development: load from file
         _SA_PATH = Path(__file__).parent / "bioattend-c4f14-firebase-adminsdk-fbsvc-0008324a24.json"
         import os
+import os
 import json
+import firebase_admin
 from firebase_admin import credentials
 
 firebase_json = os.environ.get("FIREBASE_CREDENTIALS")
 
 cred_dict = json.loads(firebase_json)
 cred = credentials.Certificate(cred_dict)
-    firebase_admin.initialize_app(cred)
+
+firebase_admin.initialize_app(cred)
 
 db_fs = firestore.client()
 
