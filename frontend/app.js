@@ -1,0 +1,2217 @@
+
+
+const API = 'http://localhost:8000/api';
+
+let scanStationClockInterval = null;
+
+let capturedPhotos = [];
+
+let autoScanInterval = null;
+
+let kioskStream = null;
+
+let adminStream = null;
+
+let regStream = null;
+
+let empStream = null;
+
+let empAutoOn = false;
+
+let empAutoInterval = null;
+
+let currentEmpId = null;
+
+
+
+/* Screens */
+
+function showScreen(id) {
+
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+
+  document.getElementById(id).classList.add('active');
+
+  if (id === 'kiosk-screen') {
+    startCamera('kiosk-video', 'kiosk').then(s => kioskStream = s);
+    loadKioskTodayLog();
+    setKioskStatus('', 'Position your face inside the oval guide');
+  }
+
+  if (id === 'dashboard-screen') {
+
+    startCamera('reg-video', 'reg').then(s => regStream = s);
+
+    loadDashboard(); loadEmployees(); loadAttendance();
+
+  }
+
+  if (id === 'employee-screen') {
+
+    startCamera('emp-video', 'emp').then(s => empStream = s);
+
+    loadEmpTodayAttendance();
+
+  }
+
+  if (id === 'login-screen') {
+
+    stopStream(kioskStream); stopStream(adminStream); stopStream(regStream); stopStream(empStream);
+
+    // Stop kiosk auto scan
+    if (kioskAutoOn) { kioskAutoOn = false; clearInterval(kioskAutoInterval); const ab = document.getElementById('kiosk-auto-btn'); if(ab) ab.classList.remove('active'); }
+
+    // Stop employee auto scan if running
+
+    if (empAutoOn) { empAutoOn = false; clearInterval(empAutoInterval); }
+
+    currentEmpId = null;
+
+  }
+
+}
+
+
+
+function stopStream(s) { if (s) s.getTracks().forEach(t => t.stop()); }
+
+
+
+/* Clock */
+
+function updateClocks() {
+
+  const now = new Date();
+
+  const time = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  const date = now.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  const el1 = document.getElementById('kiosk-time');
+
+  const el2 = document.getElementById('kiosk-date');
+
+  const el3 = document.getElementById('topbar-time');
+
+  const el4 = document.getElementById('emp-kiosk-time');
+
+  const el5 = document.getElementById('emp-kiosk-date');
+
+  if (el1) el1.textContent = time;
+
+  if (el2) el2.textContent = date;
+
+  if (el3) el3.textContent = time;
+
+  if (el4) el4.textContent = time;
+
+  if (el5) el5.textContent = date;
+
+}
+
+setInterval(updateClocks, 1000); updateClocks();
+
+
+
+/* Particles */
+
+(function spawnParticles() {
+
+  const c = document.getElementById('particles');
+
+  if (!c) return;
+
+  for (let i = 0; i < 30; i++) {
+
+    const d = document.createElement('div');
+
+    d.style.cssText = `position:absolute;width:${Math.random()*3+1}px;height:${Math.random()*3+1}px;background:rgba(14,165,233,${Math.random()*0.5+0.1});border-radius:50%;left:${Math.random()*100}%;top:${Math.random()*100}%;animation:float ${Math.random()*10+8}s linear infinite;animation-delay:-${Math.random()*10}s`;
+
+    c.appendChild(d);
+
+  }
+
+  const style = document.createElement('style');
+
+  style.textContent = '@keyframes float{0%{transform:translateY(0) translateX(0);opacity:0}10%{opacity:1}90%{opacity:1}100%{transform:translateY(-100vh) translateX(40px);opacity:0}}';
+
+  document.head.appendChild(style);
+
+})();
+
+
+
+/* Camera */
+
+async function startCamera(videoId, ctx) {
+
+  try {
+
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } });
+
+    const v = document.getElementById(videoId);
+
+    if (v) { v.srcObject = stream; }
+
+    return stream;
+
+  } catch (e) {
+
+    toast('Camera access denied: ' + e.message, 'error');
+
+    return null;
+
+  }
+
+}
+
+
+
+function captureFrame(videoId, canvasId) {
+
+  const v = document.getElementById(videoId);
+
+  const c = document.getElementById(canvasId);
+
+  if (!v || !c) return null;
+
+  c.width = v.videoWidth || 640;
+
+  c.height = v.videoHeight || 480;
+
+  c.getContext('2d').drawImage(v, 0, 0);
+
+  return c.toDataURL('image/jpeg', 0.8);
+
+}
+
+
+
+/* Auth */
+
+async function doLogin() {
+
+  const u = document.getElementById('login-username').value;
+
+  const p = document.getElementById('login-password').value;
+
+  const btn = document.getElementById('login-btn');
+
+  btn.textContent = 'Authenticating...';
+
+  btn.disabled = true;
+
+  try {
+
+    const r = await fetch(`${API}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+
+    const d = await r.json();
+
+    if (d.success) {
+
+      if (d.role === 'employee') {
+
+        // Route employee to face-scan-only screen
+
+        currentEmpId = d.employee_id;
+
+        document.getElementById('emp-display-name').textContent = d.name;
+
+        const hr = new Date().getHours();
+
+        document.getElementById('emp-greeting').textContent =
+
+          hr < 12 ? 'Good Morning,' : hr < 17 ? 'Good Afternoon,' : 'Good Evening,';
+
+        showScreen('employee-screen');
+
+      } else {
+
+        // Admin / Manager  full dashboard
+
+        document.getElementById('sidebar-user-name').textContent = d.name;
+
+        showScreen('dashboard-screen');
+
+      }
+
+    } else { showError('login-error', 'Invalid credentials'); }
+
+  } catch { showError('login-error', 'Cannot connect to server. Is the backend running?'); }
+
+  btn.textContent = 'Access System'; btn.disabled = false;
+
+}
+
+
+
+function doLogout() { showScreen('login-screen'); }
+
+document.getElementById('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+
+
+/* Employee Screen Scan */
+
+async function empScan() {
+
+  const btn = document.getElementById('emp-scan-btn');
+
+  const label = document.getElementById('emp-scan-label');
+
+  const dot = document.getElementById('emp-status-dot');
+
+  const txt = document.getElementById('emp-status-text');
+
+  if (dot) dot.className = 'scan-status-dot scanning';
+
+  if (txt) txt.textContent = 'Scanning please hold still';
+
+  if (btn) btn.disabled = true;
+
+  if (label) label.textContent = 'Scanning...';
+
+  const img = captureFrame('emp-video', 'emp-canvas');
+
+  if (!img) {
+
+    if (dot) dot.className = 'scan-status-dot error';
+
+    if (txt) txt.textContent = 'Camera not ready';
+
+    if (btn) btn.disabled = false;
+
+    if (label) label.textContent = 'Scan My Attendance';
+
+    return;
+
+  }
+
+  try {
+
+    const r = await fetch(`${API}/attendance/scan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: img }) });
+
+    const d = await r.json();
+
+    showEmpResult(d);
+
+    if (d.success && d.detected) loadEmpTodayAttendance();
+
+  } catch (e) {
+
+    if (dot) dot.className = 'scan-status-dot error';
+
+    if (txt) txt.textContent = 'Server error - is the backend running?';
+
+    showEmpResult({ success: false, message: 'Cannot reach server.' });
+
+  }
+
+  if (btn) btn.disabled = false;
+
+  if (label) label.textContent = 'Scan My Attendance';
+
+}
+
+
+
+function showEmpResult(d) {
+
+  const card = document.getElementById('emp-result-card');
+
+  const idle = document.getElementById('emp-idle-card');
+
+  const dot = document.getElementById('emp-status-dot');
+
+  const txt = document.getElementById('emp-status-text');
+
+  if (!card) return;
+
+  card.className = 'scan-result-card glass-card';
+
+  card.classList.remove('hidden');
+
+  if (idle) idle.classList.add('hidden');
+
+  const icon = document.getElementById('emp-src-icon');
+
+  const name = document.getElementById('emp-src-name');
+
+  const dept = document.getElementById('emp-src-dept');
+
+  const action = document.getElementById('emp-src-action');
+
+  const timeEl = document.getElementById('emp-src-time');
+
+  const conf = document.getElementById('emp-src-conf');
+
+  if (!d.success || !d.detected) {
+
+    card.classList.add('fail');
+
+    icon.textContent = ''; name.textContent = 'Not Recognised'; dept.textContent = '';
+
+    action.textContent = d.message || 'No face detected'; action.className = 'src-action fail';
+
+    timeEl.textContent = new Date().toLocaleTimeString(); conf.textContent = '';
+
+    if (dot) dot.className = 'scan-status-dot error';
+
+    if (txt) txt.textContent = d.message || 'No face detected';
+
+  } else {
+
+    const res = d.results[0];
+
+    if (res.action === 'check_in') {
+
+      card.classList.add('check-in');
+
+      icon.textContent = '...'; name.textContent = res.name; dept.textContent = '';
+
+      action.textContent = ' Clocked IN'; action.className = 'src-action in';
+
+      timeEl.textContent = res.time; conf.textContent = `Confidence: ${res.confidence}%`;
+
+      if (dot) dot.className = 'scan-status-dot success';
+
+      if (txt) txt.textContent = `${res.name} clocked IN at ${res.time}`;
+
+    } else if (res.action === 'check_out') {
+
+      card.classList.add('check-out');
+
+      icon.textContent = ''; name.textContent = res.name; dept.textContent = '';
+
+      action.textContent = ' Clocked OUT'; action.className = 'src-action out';
+
+      timeEl.textContent = res.time; conf.textContent = `Confidence: ${res.confidence}%`;
+
+      if (dot) dot.className = 'scan-status-dot success';
+
+      if (txt) txt.textContent = `${res.name} clocked OUT at ${res.time}`;
+
+    } else {
+
+      card.classList.add('fail');
+
+      icon.textContent = ''; name.textContent = res.name || 'Unknown'; dept.textContent = '';
+
+      action.textContent = res.message || 'Already complete'; action.className = 'src-action fail';
+
+      timeEl.textContent = new Date().toLocaleTimeString(); conf.textContent = '';
+
+      if (dot) dot.className = 'scan-status-dot error';
+
+      if (txt) txt.textContent = res.message || 'Attendance already complete';
+
+    }
+
+  }
+
+  setTimeout(() => {
+
+    card.classList.add('hidden');
+
+    if (idle) idle.classList.remove('hidden');
+
+    if (dot) dot.className = 'scan-status-dot';
+
+    if (txt) txt.textContent = 'Position your face inside the guide';
+
+  }, 6000);
+
+}
+
+
+
+function toggleEmpAutoScan() {
+
+  empAutoOn = !empAutoOn;
+
+  const btn = document.getElementById('emp-auto-btn');
+
+  if (empAutoOn) {
+
+    empAutoInterval = setInterval(empScan, 3000);
+
+    if (btn) btn.classList.add('active');
+
+    toast('Auto Scan ON', 'success');
+
+  } else {
+
+    clearInterval(empAutoInterval);
+
+    if (btn) btn.classList.remove('active');
+
+    toast('Auto Scan OFF');
+
+  }
+
+}
+
+
+
+async function loadEmpTodayAttendance() {
+
+  if (!currentEmpId) return;
+
+  try {
+
+    const r = await fetch(`${API}/employees/my-attendance/${currentEmpId}`);
+
+    const d = await r.json();
+
+    const badge = document.getElementById('emp-today-status-badge');
+
+    const cin = document.getElementById('emp-checkin-val');
+
+    const cout = document.getElementById('emp-checkout-val');
+
+    if (d.today) {
+
+      const rec = d.today;
+
+      if (cin) cin.textContent = rec.check_in || '';
+
+      if (cout) cout.textContent = rec.check_out || '';
+
+      if (badge) {
+
+        badge.textContent = rec.check_out ? 'Complete' : 'In';
+
+        badge.className = 'log-entry-badge ' + (rec.check_out ? 'out' : 'in');
+
+      }
+
+    } else {
+
+      if (cin) cin.textContent = '';
+
+      if (cout) cout.textContent = '';
+
+      if (badge) { badge.textContent = 'Not yet'; badge.className = 'log-entry-badge'; }
+
+    }
+
+  } catch (e) { console.error('loadEmpTodayAttendance:', e); }
+
+}
+
+
+
+/* Tabs */
+
+function switchTab(el) {
+
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+
+  el.classList.add('active');
+
+  document.getElementById(el.dataset.tab).classList.add('active');
+
+  document.getElementById('topbar-title').textContent = el.querySelector('.nav-label').textContent;
+
+  if (el.dataset.tab === 'tab-dashboard') loadDashboard();
+
+  if (el.dataset.tab === 'tab-employees') loadEmployees();
+
+  if (el.dataset.tab === 'tab-attendance') loadAttendance();
+
+}
+
+
+
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
+
+
+
+/* Kiosk Scan */
+
+let kioskAutoOn = false;
+let kioskAutoInterval = null;
+let kioskPopupTimer = null;
+
+function setKioskStatus(state, msg) {
+  const dot = document.getElementById('kiosk-status-dot');
+  const txt = document.getElementById('kiosk-status-text');
+  if (dot) dot.className = 'kiosk-status-dot ' + state;
+  if (txt) txt.textContent = msg;
+}
+
+async function startScan() {
+
+  const btn = document.getElementById('scan-btn');
+
+  const btnTxt = document.getElementById('scan-btn-text');
+
+  if (btn) btn.disabled = true;
+
+  if (btnTxt) btnTxt.textContent = 'Scanning...';
+
+  setKioskStatus('scanning', 'Analyzing face — please hold still');
+
+  const img = captureFrame('kiosk-video', 'kiosk-canvas');
+
+  if (!img) {
+    setKioskStatus('error', 'Camera not ready');
+    if (btn) btn.disabled = false;
+    if (btnTxt) btnTxt.textContent = 'Scan Attendance';
+    return;
+  }
+
+  try {
+
+    const r = await fetch(`${API}/attendance/scan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: img }) });
+
+    const d = await r.json();
+
+    showKioskPopup(d);
+
+  } catch { showKioskPopup({ success: false, message: 'Server error. Please try again.' }); }
+
+  if (btn) btn.disabled = false;
+
+  if (btnTxt) btnTxt.textContent = 'Scan Attendance';
+
+  setKioskStatus('', 'Position your face inside the oval guide');
+
+}
+
+
+
+function showKioskPopup(d) {
+
+  const popup  = document.getElementById('kiosk-popup');
+  const card   = document.getElementById('kiosk-popup-card');
+  const avatar = document.getElementById('kiosk-popup-avatar');
+  const greet  = document.getElementById('kiosk-popup-greeting');
+  const name   = document.getElementById('kiosk-popup-name');
+  const action = document.getElementById('kiosk-popup-action');
+  const timeEl = document.getElementById('kiosk-popup-time');
+  const conf   = document.getElementById('kiosk-popup-conf');
+  const prog   = document.getElementById('kiosk-popup-progress');
+
+  if (!popup) return;
+
+  // Clear previous timer
+  if (kioskPopupTimer) clearTimeout(kioskPopupTimer);
+
+  const hr = new Date().getHours();
+  const greeting = hr < 12 ? 'Good Morning!' : hr < 17 ? 'Good Afternoon!' : 'Good Evening!';
+
+  // Reset classes
+  card.className = 'kiosk-popup-card';
+
+  if (!d.success || !d.detected) {
+
+    // Face not detected or server error
+    card.classList.add('fail');
+    avatar.textContent = '⚠';
+    greet.textContent = 'Not Recognised';
+    name.textContent = '';
+    action.textContent = d.message || 'No face detected';
+    action.className = 'kiosk-popup-action fail';
+    timeEl.textContent = '';
+    conf.textContent = 'Please try again';
+    setKioskStatus('error', d.message || 'No face detected');
+
+  } else {
+
+    const res = d.results[0];
+
+    // Helper: label & style per punch action
+    const PUNCH_CONFIG = {
+      check_in:    { cls: 'check-in',  greet: greeting,           icon: '✅', label: 'Clocked <strong>IN</strong>',         badge: 'Punch 1 · Morning In',    actionCls: 'in'  },
+      check_out:   { cls: 'check-out', greet: 'Enjoy your break!', icon: '☕', label: 'Clocked <strong>OUT</strong>',        badge: 'Punch 2 · Lunch Break',   actionCls: 'out' },
+      check_in_2:  { cls: 'check-in',  greet: 'Welcome back!',     icon: '✅', label: 'Clocked <strong>IN</strong> (PM)',    badge: 'Punch 3 · Afternoon In',  actionCls: 'in'  },
+      check_out_2: { cls: 'check-out', greet: 'See you tomorrow!', icon: '🚪', label: 'Clocked <strong>OUT</strong> (Day Done)', badge: 'Punch 4 · End of Day', actionCls: 'out' },
+    };
+
+    const cfg = PUNCH_CONFIG[res.action];
+
+    if (cfg) {
+
+      card.classList.add(cfg.cls);
+      avatar.textContent = res.name ? res.name[0].toUpperCase() : '?';
+      greet.textContent  = cfg.greet;
+      name.textContent   = res.name;
+      action.innerHTML   = cfg.icon + ' ' + cfg.label;
+      action.className   = 'kiosk-popup-action ' + cfg.actionCls;
+      timeEl.textContent = '⏰ ' + res.time;
+      conf.textContent   = cfg.badge + '  ·  Confidence: ' + res.confidence + '%';
+      setKioskStatus('success', res.name + ' — ' + cfg.badge + ' at ' + res.time);
+      loadKioskTodayLog();
+
+    } else {
+
+      card.classList.add('fail');
+      avatar.textContent = res.name ? res.name[0].toUpperCase() : '⚠';
+      greet.textContent  = greeting;
+      name.textContent   = res.name || '';
+      action.textContent = res.message || 'All 4 punches complete for today';
+      action.className   = 'kiosk-popup-action fail';
+      timeEl.textContent = new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+      conf.textContent   = '';
+      setKioskStatus('error', res.message || 'Already complete');
+
+    }
+
+  }
+
+  // Show popup with animation
+  popup.classList.remove('hidden');
+  popup.classList.add('show');
+
+  // Animate progress bar
+  if (prog) {
+    prog.style.transition = 'none';
+    prog.style.width = '100%';
+    setTimeout(() => {
+      prog.style.transition = 'width 4s linear';
+      prog.style.width = '0%';
+    }, 50);
+  }
+
+  // Auto-dismiss after 4s
+  kioskPopupTimer = setTimeout(() => {
+    popup.classList.remove('show');
+    setTimeout(() => popup.classList.add('hidden'), 400);
+    setKioskStatus('', 'Position your face inside the oval guide');
+  }, 4200);
+
+}
+
+
+
+function toggleKioskAuto() {
+  kioskAutoOn = !kioskAutoOn;
+  const btn = document.getElementById('kiosk-auto-btn');
+  if (kioskAutoOn) {
+    kioskAutoInterval = setInterval(startScan, 3000);
+    if (btn) btn.classList.add('active');
+    setKioskStatus('scanning', 'Auto scan ON — scanning every 3 seconds');
+    toast('Auto Scan ON', 'success');
+  } else {
+    clearInterval(kioskAutoInterval);
+    if (btn) btn.classList.remove('active');
+    setKioskStatus('', 'Position your face inside the oval guide');
+    toast('Auto Scan OFF');
+  }
+}
+
+
+
+async function loadKioskTodayLog() {
+  try {
+    const r = await fetch(`${API}/attendance/today`);
+    const d = await r.json();
+    const log = document.getElementById('kiosk-today-log');
+    const cnt = document.getElementById('kiosk-today-count');
+    if (!log) return;
+    if (cnt) cnt.textContent = d.total + ' entr' + (d.total === 1 ? 'y' : 'ies') + ' today';
+    if (d.total === 0) {
+      log.innerHTML = '<div class="kiosk-today-empty">No check-ins yet today</div>';
+      return;
+    }
+    log.innerHTML = d.records.slice().reverse().slice(0, 6).map(rec => {
+      // Show all filled punches
+      const punches = [
+        rec.check_in    ? `<span style="color:var(--green)">▶ ${rec.check_in}</span>`    : '',
+        rec.check_out   ? `<span style="color:var(--blue)">◀ ${rec.check_out}</span>`   : '',
+        rec.check_in_2  ? `<span style="color:var(--green)">▶ ${rec.check_in_2}</span>` : '',
+        rec.check_out_2 ? `<span style="color:var(--blue)">◀ ${rec.check_out_2}</span>` : '',
+      ].filter(Boolean);
+      const pCount = punches.length;
+      const isDone = pCount === 4;
+      return `<div class="kiosk-today-row">
+        <div class="kiosk-today-av">${rec.name[0]}</div>
+        <div class="kiosk-today-info">
+          <div class="kiosk-today-name">${rec.name}</div>
+          <div class="kiosk-today-meta" style="display:flex;gap:8px;flex-wrap:wrap">${punches.join('<span style="opacity:.3">·</span>')}</div>
+        </div>
+        <span class="kiosk-today-badge ${isDone ? 'out' : 'in'}">${pCount}/4</span>
+      </div>`;
+    }).join('');
+
+  } catch(e) { console.error('loadKioskTodayLog:', e); }
+}
+
+
+
+
+/* Scan Station */
+
+function startScanStationClock() {
+
+  stopScanStationClock();
+
+  function tick() { const el = document.getElementById('scan-live-clock'); if (el) el.textContent = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
+
+  tick();
+
+  scanStationClockInterval = setInterval(tick, 1000);
+
+}
+
+function stopScanStationClock() { if (scanStationClockInterval) { clearInterval(scanStationClockInterval); scanStationClockInterval = null; } }
+
+
+
+function setScanStatus(state, msg) {
+
+  const dot = document.getElementById('scan-status-dot');
+
+  const txt = document.getElementById('scan-status-text');
+
+  if (dot) { dot.className = 'scan-status-dot ' + state; }
+
+  if (txt) txt.textContent = msg;
+
+}
+
+
+
+async function adminScan() {
+
+  const btn = document.getElementById('admin-scan-btn');
+
+  const label = document.getElementById('scan-btn-label');
+
+  setScanStatus('scanning', 'Scanning please hold still');
+
+  if (btn) btn.disabled = true;
+
+  if (label) label.textContent = 'Scanning...';
+
+  const img = captureFrame('admin-video', 'admin-canvas');
+
+  if (!img) { setScanStatus('error', 'Camera not ready'); if (btn) btn.disabled = false; if (label) label.textContent = 'Scan My Attendance'; return; }
+
+  try {
+
+    const r = await fetch(`${API}/attendance/scan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: img }) });
+
+    const d = await r.json();
+
+    showScanStationResult(d);
+
+    if (d.success && d.detected) { loadScanLog(); loadDashboard(); }
+
+  } catch (e) {
+
+    setScanStatus('error', 'Server error - is the backend running?');
+
+    showScanStationResult({ success: false, message: 'Cannot reach server.' });
+
+  }
+
+  if (btn) btn.disabled = false;
+
+  if (label) label.textContent = 'Scan My Attendance';
+
+}
+
+
+
+function showScanStationResult(d) {
+
+  const card = document.getElementById('scan-result-card');
+
+  const idle = document.getElementById('scan-idle-card');
+
+  if (!card) return;
+
+  card.className = 'scan-result-card glass-card';
+
+  card.classList.remove('hidden');
+
+  if (idle) idle.classList.add('hidden');
+
+
+
+  const icon = document.getElementById('src-icon');
+
+  const name = document.getElementById('src-name');
+
+  const dept = document.getElementById('src-dept');
+
+  const action = document.getElementById('src-action');
+
+  const timeEl = document.getElementById('src-time');
+
+  const conf = document.getElementById('src-conf');
+
+
+
+  if (!d.success || !d.detected) {
+
+    card.classList.add('fail');
+
+    icon.textContent = ''; name.textContent = 'Not Recognised'; dept.textContent = '';
+
+    action.textContent = d.message || 'No face detected'; action.className = 'src-action fail';
+
+    timeEl.textContent = new Date().toLocaleTimeString(); conf.textContent = '';
+
+    setScanStatus('error', d.message || 'No face detected');
+
+  } else {
+
+    const res = d.results[0];
+
+    if (res.action === 'check_in') {
+
+      card.classList.add('check-in');
+
+      icon.textContent = '...'; name.textContent = res.name; dept.textContent = '';
+
+      action.textContent = ' Clocked IN'; action.className = 'src-action in';
+
+      timeEl.textContent = res.time; conf.textContent = `Confidence: ${res.confidence}%`;
+
+      setScanStatus('success', `${res.name} clocked IN at ${res.time}`);
+
+    } else if (res.action === 'check_out') {
+
+      card.classList.add('check-out');
+
+      icon.textContent = ''; name.textContent = res.name; dept.textContent = '';
+
+      action.textContent = ' Clocked OUT'; action.className = 'src-action out';
+
+      timeEl.textContent = res.time; conf.textContent = `Confidence: ${res.confidence}%`;
+
+      setScanStatus('success', `${res.name} clocked OUT at ${res.time}`);
+
+    } else {
+
+      card.classList.add('fail');
+
+      icon.textContent = ''; name.textContent = res.name || 'Unknown'; dept.textContent = '';
+
+      action.textContent = res.message || 'Already complete'; action.className = 'src-action fail';
+
+      timeEl.textContent = new Date().toLocaleTimeString(); conf.textContent = '';
+
+      setScanStatus('error', res.message || 'Attendance already complete');
+
+    }
+
+  }
+
+  setTimeout(() => {
+
+    card.classList.add('hidden');
+
+    if (idle) idle.classList.remove('hidden');
+
+    setScanStatus('ready', 'Position your face inside the guide');
+
+  }, 6000);
+
+}
+
+
+
+async function loadScanLog() {
+
+  try {
+
+    const r = await fetch(`${API}/attendance/today`);
+
+    const d = await r.json();
+
+    const log = document.getElementById('scan-today-log');
+
+    const cnt = document.getElementById('log-count');
+
+    if (!log) return;
+
+    if (cnt) cnt.textContent = `${d.total} entr${d.total === 1 ? 'y' : 'ies'}`;
+
+    if (d.total === 0) { log.innerHTML = '<div class="log-empty">No check-ins yet today</div>'; return; }
+
+    log.innerHTML = d.records.slice().reverse().map(rec => {
+
+      const hasOut = !!rec.check_out;
+
+      return `<div class="log-entry"><div class="log-entry-avatar">${rec.name[0]}</div><div style="flex:1"><div class="log-entry-name">${rec.name}</div><div class="log-entry-meta">IN ${rec.check_in}${hasOut ? ' . OUT ' + rec.check_out : ''}</div></div><span class="log-entry-badge ${hasOut ? 'out' : 'in'}">${hasOut ? 'Complete' : 'In'}</span></div>`;
+
+    }).join('');
+
+  } catch (e) { console.error('loadScanLog:', e); }
+
+}
+
+
+
+let autoOn = false;
+
+function toggleAutoScan() {
+
+  autoOn = !autoOn;
+
+  const btn = document.getElementById('auto-scan-btn');
+
+  if (autoOn) {
+
+    autoScanInterval = setInterval(adminScan, 3000);
+
+    if (btn) btn.classList.add('active');
+
+    setScanStatus('ready', 'Auto scan active - scanning every 3 seconds');
+
+    toast('Auto Scan ON', 'success');
+
+  } else {
+
+    clearInterval(autoScanInterval);
+
+    if (btn) btn.classList.remove('active');
+
+    setScanStatus('ready', 'Position your face inside the guide');
+
+    toast('Auto Scan OFF');
+
+  }
+
+}
+
+
+
+/* Registration */
+
+function capturePhoto() {
+
+  const img = captureFrame('reg-video', 'reg-canvas');
+
+  if (!img) { toast('Camera not ready', 'error'); return; }
+
+  capturedPhotos.push(img);
+
+  const strip = document.getElementById('photo-strip');
+
+  const thumb = document.createElement('img');
+
+  thumb.src = img; thumb.className = 'photo-thumb'; strip.appendChild(thumb);
+
+  document.getElementById('capture-count').textContent = `${capturedPhotos.length} photo${capturedPhotos.length > 1 ? 's' : ''} captured`;
+
+  toast(`Photo ${capturedPhotos.length} captured`);
+
+}
+
+
+
+function clearCaptures() {
+
+  capturedPhotos = [];
+
+  document.getElementById('photo-strip').innerHTML = '';
+
+  document.getElementById('capture-count').textContent = '0 photos captured';
+
+}
+
+
+
+async function registerEmployee(e) {
+
+  e.preventDefault();
+
+  if (capturedPhotos.length < 2) { toast('Capture at least 2 face photos', 'error'); return; }
+
+  const btn = document.getElementById('reg-submit-btn');
+
+  const status = document.getElementById('reg-status');
+
+  btn.disabled = true; btn.textContent = 'Registering...';
+
+  const payload = {
+
+    name: document.getElementById('reg-name').value,
+
+    employee_id: document.getElementById('reg-empid').value,
+
+    department: document.getElementById('reg-dept').value,
+
+    role: document.getElementById('reg-role').value,
+
+    email: document.getElementById('reg-email').value,
+
+    phone: document.getElementById('reg-phone').value,
+
+    shift_start: document.getElementById('reg-shift-start').value,
+
+    shift_end: document.getElementById('reg-shift-end').value,
+
+    lunch_break_start: document.getElementById('reg-lunch-start').value,
+
+    lunch_break_end: document.getElementById('reg-lunch-end').value,
+
+    monthly_salary: parseFloat(document.getElementById('reg-salary').value) || 0,
+
+    password: document.getElementById('reg-password').value || 'emp123',
+
+    images: capturedPhotos
+
+  };
+
+  try {
+
+    const r = await fetch(`${API}/employees/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+    const d = await r.json();
+
+    status.classList.remove('hidden', 'error', 'success');
+
+    if (d.success) {
+
+      status.className = 'reg-status success'; status.textContent = d.message;
+
+      document.getElementById('reg-form').reset(); clearCaptures();
+
+      toast('Employee registered!', 'success');
+
+    } else { status.className = 'reg-status error'; status.textContent = d.detail || 'Registration failed'; }
+
+  } catch (ex) { status.className = 'reg-status error'; status.textContent = 'Server error: ' + ex.message; status.classList.remove('hidden'); }
+
+  btn.disabled = false; btn.textContent = 'Register Employee';
+
+}
+
+
+
+/* Role Selection */
+
+const ROLE_CONFIG = {
+
+  admin:    { label: 'Username', hint: 'Full system access', user: 'admin',   pass: 'admin123',   placeholder: 'admin' },
+
+  manager:  { label: 'Username', hint: 'Attendance & reports', user: 'manager', pass: 'manager123', placeholder: 'manager' },
+
+  employee: { label: 'Employee ID', hint: 'Your Employee ID + password', user: '', pass: '', placeholder: 'e.g. EMP001' }
+
+};
+
+let selectedRole = 'admin';
+
+function selectRole(role) {
+
+  selectedRole = role;
+
+  document.querySelectorAll('.role-tab').forEach(t => t.classList.remove('active'));
+
+  document.getElementById(`tab-${role}-btn`).classList.add('active');
+
+  const cfg = ROLE_CONFIG[role];
+
+  document.getElementById('username-label').textContent = cfg.label;
+
+  document.getElementById('login-username').placeholder = cfg.placeholder;
+
+  document.getElementById('login-username').value = cfg.user;
+
+  document.getElementById('login-password').value = cfg.pass;
+
+  document.getElementById('role-hint-text').textContent = cfg.hint;
+
+  const box = document.getElementById('creds-box');
+
+  const credUser = document.getElementById('cred-user');
+
+  const credPass = document.getElementById('cred-pass');
+
+  if (role === 'employee') {
+
+    box.style.display = 'none';
+
+  } else {
+
+    box.style.display = '';
+
+    credUser.textContent = cfg.user;
+
+    credPass.textContent = cfg.pass;
+
+  }
+
+  // Clear previous error
+
+  const err = document.getElementById('login-error');
+
+  if (err) err.classList.add('hidden');
+
+}
+
+
+
+/* Dashboard */
+
+async function loadDashboard() {
+
+  try {
+
+    const r = await fetch(`${API}/dashboard/stats`);
+
+    const d = await r.json();
+
+    document.getElementById('stat-total').textContent = d.total_employees;
+
+    document.getElementById('stat-present').textContent = d.present_today;
+
+    document.getElementById('stat-absent').textContent = d.absent_today;
+
+    document.getElementById('stat-rate').textContent = d.attendance_rate + '%';
+
+    const list = document.getElementById('today-list');
+
+    list.innerHTML = d.today_records.length === 0 ? '<div style="color:var(--text2);font-size:.85rem;text-align:center;padding:20px">No check-ins yet today</div>' :
+
+      d.today_records.map(r => `<div class="today-item"><div class="today-avatar">${r.name[0]}</div><div><div class="today-name">${r.name}</div><div class="today-time">${r.check_in}${r.check_out ? '  ' + r.check_out : ''}</div></div><span class="badge badge-${r.check_out ? 'out' : 'in'}">${r.check_out ? 'Complete' : 'In'}</span></div>`).join('');
+
+    renderWeeklyChart(d.weekly_stats);
+
+    loadCalendar();
+
+  } catch (e) { console.error('Dashboard error:', e); }
+
+}
+
+
+
+function renderWeeklyChart(stats) {
+
+  const canvas = document.getElementById('weekly-chart');
+
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+
+  const labels = Object.keys(stats).reverse();
+
+  const values = labels.map(k => stats[k]);
+
+  const W = canvas.offsetWidth || 400; const H = 200;
+
+  canvas.width = W; canvas.height = H;
+
+  const max = Math.max(...values, 1);
+
+  const pad = { t: 20, b: 30, l: 30, r: 10 };
+
+  const chartW = W - pad.l - pad.r; const chartH = H - pad.t - pad.b;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Grid
+
+  ctx.strokeStyle = 'rgba(14,165,233,0.1)'; ctx.lineWidth = 1;
+
+  for (let i = 0; i <= 4; i++) { const y = pad.t + (chartH / 4) * i; ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke(); }
+
+  // Bars
+
+  const bw = (chartW / labels.length) * 0.6;
+
+  const gap = chartW / labels.length;
+
+  const grad = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
+
+  grad.addColorStop(0, 'rgba(0,212,255,0.9)'); grad.addColorStop(1, 'rgba(59,130,246,0.3)');
+
+  labels.forEach((label, i) => {
+
+    const bh = (values[i] / max) * chartH;
+
+    const x = pad.l + gap * i + (gap - bw) / 2;
+
+    const y = pad.t + chartH - bh;
+
+    ctx.fillStyle = grad; ctx.beginPath();
+
+    ctx.roundRect ? ctx.roundRect(x, y, bw, bh, 4) : ctx.rect(x, y, bw, bh);
+
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(148,163,184,0.7)'; ctx.font = '10px Inter'; ctx.textAlign = 'center';
+
+    ctx.fillText(label.slice(5), pad.l + gap * i + gap / 2, H - 6);
+
+    ctx.fillStyle = 'rgba(0,212,255,0.9)';
+
+    ctx.fillText(values[i], pad.l + gap * i + gap / 2, y - 4);
+
+  });
+
+}
+
+
+
+/* Employees */
+
+let allEmployees = [];
+
+async function loadEmployees() {
+
+  try {
+
+    const r = await fetch(`${API}/employees`);
+
+    const d = await r.json();
+
+    allEmployees = d.employees;
+
+    renderEmployees(allEmployees);
+
+    populateEmpDropdowns(allEmployees);
+
+  } catch (e) { console.error(e); }
+
+}
+
+
+
+function renderEmployees(emps) {
+  const grid = document.getElementById('employees-grid');
+  if (!grid) return;
+  grid.innerHTML = emps.length === 0
+    ? '<div style="color:var(--text2);padding:40px;text-align:center;grid-column:1/-1">No employees registered yet.</div>'
+    : emps.map(function(e) {
+        var salary = e.monthly_salary > 0
+          ? '<div class="emp-salary-badge">Rs.' + Number(e.monthly_salary).toLocaleString('en-IN') + '/mo</div>'
+          : '';
+        var shiftInfo = 'Shift: ' + (e.shift_start || '09:00') + ' - ' + (e.shift_end || '18:00');
+        var lunchInfo = e.lunch_break_start
+          ? ' | Lunch: ' + e.lunch_break_start + '-' + (e.lunch_break_end || '14:00')
+          : '';
+        return '<div class="emp-card glass-card">' +
+          '<div class="emp-avatar">' + e.name[0] + '</div>' +
+          '<div class="emp-name">' + e.name + '</div>' +
+          '<div class="emp-id">' + e.id + '</div>' +
+          '<div class="emp-dept">' + e.department + '</div>' +
+          '<div class="emp-role">' + e.role + '</div>' +
+          '<div style="font-size:.75rem;color:var(--text2)">' + e.email + '</div>' +
+          '<div style="font-size:.73rem;color:var(--text2);margin-top:2px">' + shiftInfo + lunchInfo + '</div>' +
+          salary +
+          '<div class="emp-actions">' +
+          '<button class="btn-edit" onclick="editEmployee(\'' + e.id + '\')">&#9998; Edit</button>' +
+          '<button class="btn-danger" style="padding:6px 12px;font-size:.75rem" onclick="deleteEmployee(\'' + e.id + '\')">&#128465; Remove</button>' +
+          '</div></div>';
+      }).join('');
+}
+
+
+
+
+function filterEmployees() {
+
+  const q = document.getElementById('emp-search').value.toLowerCase();
+
+  renderEmployees(allEmployees.filter(e => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q) || e.department.toLowerCase().includes(q)));
+
+}
+
+
+
+async function deleteEmployee(id) {
+
+  if (!confirm('Remove this employee and all their face data?')) return;
+
+  try {
+
+    const r = await fetch(`${API}/employees/${id}`, { method: 'DELETE' });
+
+    const d = await r.json();
+
+    if (d.success) { toast('Employee removed', 'success'); loadEmployees(); }
+
+  } catch (e) { toast('Error: ' + e.message, 'error'); }
+
+}
+
+
+
+function editEmployee(id) {
+
+  const emp = allEmployees.find(e => e.id === id);
+
+  if (!emp) return;
+
+  document.getElementById('edit-empid').value = emp.id;
+
+  document.getElementById('edit-empid-display').value = emp.id;
+
+  document.getElementById('edit-modal-sub').textContent = `ID: ${emp.id}`;
+
+  document.getElementById('edit-name').value = emp.name || '';
+
+  document.getElementById('edit-dept').value = emp.department || 'Engineering';
+
+  document.getElementById('edit-role').value = emp.role || '';
+
+  document.getElementById('edit-email').value = emp.email || '';
+
+  document.getElementById('edit-phone').value = emp.phone || '';
+
+  document.getElementById('edit-shift-start').value = emp.shift_start || '09:00';
+
+  document.getElementById('edit-shift-end').value = emp.shift_end || '18:00';
+
+  document.getElementById('edit-lunch-start').value = emp.lunch_break_start || '13:00';
+
+  document.getElementById('edit-lunch-end').value = emp.lunch_break_end || '14:00';
+
+  document.getElementById('edit-salary').value = emp.monthly_salary || '';
+
+  document.getElementById('edit-status').classList.add('hidden');
+
+  document.getElementById('edit-modal').classList.remove('hidden');
+
+  document.body.classList.add('modal-open');
+
+}
+
+
+
+function handleModalBackdrop(e) {
+
+  if (e.target === document.getElementById('edit-modal')) closeEditModal();
+
+}
+
+
+
+function closeEditModal() {
+
+  document.getElementById('edit-modal').classList.add('hidden');
+
+  document.body.classList.remove('modal-open');
+
+}
+
+
+
+async function saveEmployee(e) {
+
+  e.preventDefault();
+
+  const id = document.getElementById('edit-empid').value;
+
+  const btn = document.getElementById('edit-save-btn');
+
+  const status = document.getElementById('edit-status');
+
+  btn.disabled = true; btn.textContent = 'Saving...';
+
+  const payload = {
+
+    name: document.getElementById('edit-name').value,
+
+    department: document.getElementById('edit-dept').value,
+
+    role: document.getElementById('edit-role').value,
+
+    email: document.getElementById('edit-email').value,
+
+    phone: document.getElementById('edit-phone').value,
+
+    shift_start: document.getElementById('edit-shift-start').value,
+
+    shift_end: document.getElementById('edit-shift-end').value,
+
+    lunch_break_start: document.getElementById('edit-lunch-start').value,
+
+    lunch_break_end: document.getElementById('edit-lunch-end').value,
+
+    monthly_salary: parseFloat(document.getElementById('edit-salary').value) || 0
+
+  };
+
+  try {
+
+    const r = await fetch(`${API}/employees/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+    const d = await r.json();
+
+    status.classList.remove('hidden', 'error', 'success');
+
+    if (d.success) {
+
+      status.className = 'reg-status success'; status.textContent = '... ' + d.message;
+
+      toast('Employee updated!', 'success');
+
+      loadEmployees();
+
+      setTimeout(closeEditModal, 1200);
+
+    } else {
+
+      status.className = 'reg-status error'; status.textContent = d.detail || 'Update failed';
+
+    }
+
+  } catch (ex) {
+
+    status.classList.remove('hidden'); status.className = 'reg-status error'; status.textContent = 'Server error: ' + ex.message;
+
+  }
+
+  btn.disabled = false; btn.innerHTML = '<span class="btn-glow"></span>&#128190; Save Changes';
+
+}
+
+
+
+function populateEmpDropdowns(emps) {
+
+  const selects = ['manual-emp', 'report-emp-select', 'payroll-emp'];
+
+  selects.forEach(sid => {
+
+    const sel = document.getElementById(sid);
+
+    if (!sel) return;
+
+    const isPayroll = sid === 'payroll-emp';
+
+    sel.innerHTML = (isPayroll ? '<option value="">All Employees</option>' : '<option value="">Select Employee</option>')
+
+      + emps.map(e => `<option value="${e.id}">${e.name} (${e.id})</option>`).join('');
+
+  });
+
+}
+
+
+
+/* Attendance */
+
+async function loadAttendance(start, end) {
+
+  try {
+
+    let url = `${API}/attendance/history`;
+
+    const params = new URLSearchParams();
+
+    if (start) params.append('start_date', start);
+
+    if (end) params.append('end_date', end);
+
+    if (params.toString()) url += '?' + params.toString();
+
+    const r = await fetch(url);
+
+    const d = await r.json();
+
+    renderAttendanceTable(d.records);
+
+  } catch (e) { console.error(e); }
+
+}
+
+
+
+function filterAttendance() {
+
+  const s = document.getElementById('att-start').value;
+
+  const e = document.getElementById('att-end').value;
+
+  loadAttendance(s, e);
+
+}
+
+
+
+function renderAttendanceTable(records) {
+
+  const tbody = document.getElementById('att-tbody');
+
+  if (!tbody) return;
+
+  tbody.innerHTML = records.length === 0 ? '<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--text2)">No attendance records found</td></tr>' :
+
+    records.slice().reverse().map(r => {
+      const p = [r.check_in, r.check_out, r.check_in_2, r.check_out_2].filter(Boolean).length;
+      return `<tr>
+        <td><strong>${r.name}</strong><br><span style="font-size:.75rem;color:var(--text2)">${r.employee_id}</span></td>
+        <td>${r.department || ''}</td>
+        <td>${r.date}</td>
+        <td style="color:var(--green);font-family:'Orbitron',sans-serif;font-size:.8rem">${r.check_in || '—'}</td>
+        <td style="color:var(--red);font-family:'Orbitron',sans-serif;font-size:.8rem">${r.check_out || '—'}</td>
+        <td style="color:var(--green);font-family:'Orbitron',sans-serif;font-size:.8rem">${r.check_in_2 || '—'}</td>
+        <td style="color:var(--blue);font-family:'Orbitron',sans-serif;font-size:.8rem">${r.check_out_2 || '—'}</td>
+        <td><span class="badge badge-present">${r.status}</span></td>
+        <td><span class="badge ${p===4?'badge-out':'badge-in'}">${p}/4</span></td>
+      </tr>`;
+    }).join('');
+
+
+}
+
+
+
+async function submitManualAttendance() {
+
+  const eid = document.getElementById('manual-emp').value;
+
+  const type = document.getElementById('manual-type').value;
+
+  const date = document.getElementById('manual-date').value;
+
+  if (!eid) { toast('Select an employee', 'error'); return; }
+
+  try {
+
+    const r = await fetch(`${API}/attendance/manual`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employee_id: eid, type, date: date || undefined }) });
+
+    const d = await r.json();
+
+    if (d.success) { toast(d.message, 'success'); loadAttendance(); loadDashboard(); }
+
+    else toast(d.detail || 'Error', 'error');
+
+  } catch (e) { toast('Server error', 'error'); }
+
+}
+
+
+
+function exportAttendance() {
+
+  const rows = document.querySelectorAll('#att-tbody tr');
+
+  let csv = 'Name,Employee ID,Department,Date,Check In,Check Out,Status,Confidence\n';
+
+  rows.forEach(r => {
+
+    const cells = r.querySelectorAll('td');
+
+    if (cells.length < 2) return;
+
+    csv += Array.from(cells).map(c => `"${c.innerText.replace(/\n/g, ', ')}"`).join(', ') + '\n';
+
+  });
+
+  downloadCSV(csv, `attendance_${new Date().toISOString().slice(0, 10)}.csv`);
+
+}
+
+
+
+/* Reports */
+
+async function generateMonthlyReport() {
+
+  const r = await fetch(`${API}/attendance/history`);
+
+  const d = await r.json();
+
+  const out = document.getElementById('report-output');
+
+  out.classList.remove('hidden');
+
+  const byDate = {};
+
+  d.records.forEach(rec => { if (!byDate[rec.date]) byDate[rec.date] = 0; byDate[rec.date]++; });
+
+  out.innerHTML = '<h3 style="margin-bottom:16px">Monthly Attendance Summary</h3><table><thead><tr><th>Date</th><th>Present</th></tr></thead><tbody>' + Object.entries(byDate).sort((a, b) => b[0].localeCompare(a[0])).map(([date, count]) => `<tr><td>${date}</td><td>${count}</td></tr>`).join('') + '</tbody></table>';
+
+}
+
+
+
+async function generateEmployeeReport() {
+
+  const eid = document.getElementById('report-emp-select').value;
+
+  if (!eid) { toast('Select an employee', 'error'); return; }
+
+  const r = await fetch(`${API}/attendance/history?employee_id=${eid}`);
+
+  const d = await r.json();
+
+  const out = document.getElementById('report-output');
+
+  out.classList.remove('hidden');
+
+  const emp = allEmployees.find(e => e.id === eid);
+
+  out.innerHTML = `<h3 style="margin-bottom:8px">${emp?.name || eid}  Attendance Report</h3><p style="color:var(--text2);font-size:.85rem;margin-bottom:16px">Total: ${d.total} records</p><table><thead><tr><th>Date</th><th>Check In</th><th>Check Out</th><th>Status</th></tr></thead><tbody>` + d.records.map(r => `<tr><td>${r.date}</td><td>${r.check_in || ', '}</td><td>${r.check_out || ', '}</td><td>${r.status}</td></tr>`).join('') + '</tbody></table>';
+
+}
+
+
+
+async function exportAllData() {
+
+  const r = await fetch(`${API}/attendance/history`);
+
+  const d = await r.json();
+
+  let csv = 'Name,Employee ID,Department,Date,Check In,Check Out,Status,Confidence\n';
+
+  d.records.forEach(r => { csv += `"${r.name}","${r.employee_id}","${r.department || ''}","${r.date}","${r.check_in || ''}","${r.check_out || ''}","${r.status}","${r.confidence || 'Manual'}"\n`; });
+
+  downloadCSV(csv, `bioattend_all_${new Date().toISOString().slice(0, 10)}.csv`);
+
+}
+
+
+
+function downloadCSV(csv, filename) {
+
+  const a = document.createElement('a');
+
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+
+  a.download = filename; a.click();
+
+}
+
+
+
+/* Helpers */
+
+function toast(msg, type = 'info') {
+
+  const t = document.getElementById('toast');
+
+  t.textContent = msg;
+
+  t.className = `toast`;
+
+  t.style.background = type === 'error' ? 'linear-gradient(135deg,#f43f5e,#be123c)' : type === 'success' ? 'linear-gradient(135deg,#0ea5e9,#1d4ed8)' : 'linear-gradient(135deg,#3b82f6,#1d4ed8)';
+
+  t.classList.remove('hidden');
+
+  setTimeout(() => t.classList.add('hidden'), 3000);
+
+}
+
+
+
+function showError(id, msg) { const el = document.getElementById(id); if (el) { el.textContent = msg; el.classList.remove('hidden'); } }
+
+
+
+// Set default date for manual attendance
+
+document.getElementById('manual-date').value = new Date().toISOString().slice(0, 10);
+
+document.getElementById('att-start').value = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+
+document.getElementById('att-end').value = new Date().toISOString().slice(0, 10);
+
+
+
+/* Payroll Report */
+
+let lastPayrollData = [];
+
+
+
+function fmt(n) {
+
+  return '' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+}
+
+
+
+async function generatePayrollReport() {
+
+  const start = document.getElementById('payroll-start').value;
+
+  const end   = document.getElementById('payroll-end').value;
+
+  const eid   = document.getElementById('payroll-emp').value;
+
+  let url = `${API}/payroll/calculate`;
+
+  const p = new URLSearchParams();
+
+  if (start) p.append('start_date', start);
+
+  if (end)   p.append('end_date', end);
+
+  if (eid)   p.append('employee_id', eid);
+
+  if (p.toString()) url += '?' + p.toString();
+
+  try {
+
+    const r = await fetch(url);
+
+    const d = await r.json();
+
+    lastPayrollData = d.payroll || [];
+
+    renderPayrollReport(lastPayrollData, d.period);
+
+  } catch (e) { toast('Error fetching payroll: ' + e.message, 'error'); }
+
+}
+
+
+
+function renderPayrollReport(payroll, period) {
+
+  const out = document.getElementById('payroll-output');
+
+  out.classList.remove('hidden');
+
+  if (payroll.length === 0) {
+
+    out.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text2)">No payroll data found for the selected period.</div>';
+
+    return;
+
+  }
+
+  const totalGross  = payroll.reduce((s, p) => s + p.gross_earned, 0);
+
+  const totalPenalty = payroll.reduce((s, p) => s + p.total_penalty, 0);
+
+  const totalNet    = payroll.reduce((s, p) => s + p.net_salary, 0);
+
+  const periodLabel = (period?.start && period?.end) ? `${period.start} to ${period.end}` : 'All time';
+
+
+
+  out.innerHTML = `
+
+    <div class="payroll-summary-bar">
+
+      <div class="payroll-sum-item"><div class="payroll-sum-label">Period</div><div class="payroll-sum-value" style="font-size:.85rem;font-family:Inter,sans-serif">${periodLabel}</div></div>
+
+      <div class="payroll-sum-item"><div class="payroll-sum-label">Employees</div><div class="payroll-sum-value">${payroll.length}</div></div>
+
+      <div class="payroll-sum-item"><div class="payroll-sum-label">Total Gross</div><div class="payroll-sum-value">${fmt(totalGross)}</div></div>
+
+      <div class="payroll-sum-item"><div class="payroll-sum-label">Total Deductions</div><div class="payroll-sum-value red">${fmt(totalPenalty)}</div></div>
+
+      <div class="payroll-sum-item"><div class="payroll-sum-label">Total Net Pay</div><div class="payroll-sum-value green">${fmt(totalNet)}</div></div>
+
+    </div>
+
+    <table class="payroll-table">
+
+      <thead><tr>
+
+        <th>Employee</th>
+
+        <th>Dept</th>
+
+        <th>Monthly Salary</th>
+
+        <th>Daily Rate</th>
+
+        <th>Days Worked</th>
+
+        <th>Gross Earned</th>
+
+        <th>Late Days</th>
+
+        <th>Deductions</th>
+
+        <th>Net Salary</th>
+
+      </tr></thead>
+
+      <tbody>
+
+        ${payroll.map(p => `
+
+          <tr>
+
+            <td class="name-cell">${p.name}<br><span style="font-size:.72rem;color:var(--text2);font-weight:400">${p.employee_id}</span></td>
+
+            <td>${p.department || ''}</td>
+
+            <td class="salary-cell">${fmt(p.monthly_salary)}</td>
+
+            <td>${fmt(p.daily_rate)}</td>
+
+            <td><strong>${p.working_days}</strong></td>
+
+            <td class="salary-cell">${fmt(p.gross_earned)}</td>
+
+            <td>${p.late_days > 0 ? `<span class="payroll-late-chip"> ${p.late_days}d</span>` : '<span style="opacity:.4"></span>'}</td>
+
+            <td class="${p.total_penalty > 0 ? 'penalty-cell' : 'zero-cell'}">${p.total_penalty > 0 ? '-' + fmt(p.total_penalty) : ''}</td>
+
+            <td class="net-cell">${fmt(p.net_salary)}</td>
+
+          </tr>`).join('')}
+
+      </tbody>
+
+    </table>`;
+
+}
+
+
+
+function exportPayrollCSV() {
+
+  if (!lastPayrollData.length) { toast('Generate a payroll report first', 'error'); return; }
+
+  let csv = 'Employee,Employee ID,Department,Monthly Salary,Daily Rate,Days Worked,Gross Earned,Late Days,Deductions,Net Salary\n';
+
+  lastPayrollData.forEach(p => {
+
+    csv += `"${p.name}","${p.employee_id}","${p.department || ''}","${p.monthly_salary}","${p.daily_rate}","${p.working_days}","${p.gross_earned}","${p.late_days}","${p.total_penalty}","${p.net_salary}"\n`;
+
+  });
+
+  downloadCSV(csv, `payroll_${new Date().toISOString().slice(0,10)}.csv`);
+
+}
+
+
+
+// Default payroll date range: current month
+
+(function initPayrollDates(){
+
+  const now = new Date();
+
+  const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
+
+  const lastDay = new Date(y, now.getMonth()+1, 0).getDate();
+
+  const s = document.getElementById('payroll-start');
+
+  const e = document.getElementById('payroll-end');
+
+  if (s) s.value = `${y}-${m}-01`;
+
+  if (e) e.value = `${y}-${m}-${String(lastDay).padStart(2,'0')}`;
+
+})();
+
+
+
+/* Monthly Attendance Calendar */
+
+let calYear  = new Date().getFullYear();
+
+let calMonth = new Date().getMonth();
+
+let calAttData = {};
+
+let calSelectedDay = null;
+
+let calTotalEmps = 0;
+
+
+
+const CAL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+
+                    'July', 'August', 'September', 'October', 'November', 'December'];
+
+
+
+async function loadCalendar() {
+
+  const y = calYear;
+
+  const m = String(calMonth + 1).padStart(2, '0');
+
+  const start = `${y}-${m}-01`;
+
+  const lastD = new Date(y, calMonth + 1, 0).getDate();
+
+  const end   = `${y}-${m}-${String(lastD).padStart(2, '0')}`;
+
+
+
+  const lbl = document.getElementById('cal-month-label');
+
+  const sub = document.getElementById('cal-subtitle');
+
+  if (lbl) lbl.textContent = `${CAL_MONTHS[calMonth]} ${y}`;
+
+  if (sub) sub.textContent = `Attendance overview - ${CAL_MONTHS[calMonth]} ${y}`;
+
+
+
+  try {
+
+    const [attRes, dbRes] = await Promise.all([
+
+      fetch(`${API}/attendance/history?start_date=${start}&end_date=${end}`),
+
+      fetch(`${API}/dashboard/stats`)
+
+    ]);
+
+    const attData = await attRes.json();
+
+    const dbData  = await dbRes.json();
+
+    calTotalEmps  = dbData.total_employees || 0;
+
+    calAttData = {};
+
+    (attData.records || []).forEach(r => {
+
+      if (!calAttData[r.date]) calAttData[r.date] = [];
+
+      calAttData[r.date].push(r);
+
+    });
+
+    renderCalendar();
+
+  } catch(e) { console.error('Calendar load error:', e); }
+
+}
+
+
+
+function renderCalendar() {
+
+  const grid = document.getElementById('cal-days');
+
+  if (!grid) return;
+
+  const today    = new Date();
+
+  const todayStr = today.toISOString().slice(0, 10);
+
+  const firstDay = new Date(calYear, calMonth, 1).getDay();
+
+  const daysInM  = new Date(calYear, calMonth + 1, 0).getDate();
+
+  let html = '';
+
+  for (let i = 0; i < firstDay; i++) html += '<div class="cal-day empty"></div>';
+
+  for (let d = 1; d <= daysInM; d++) {
+
+    const mm       = String(calMonth + 1).padStart(2, '0');
+
+    const dd       = String(d).padStart(2, '0');
+
+    const dateStr  = `${calYear}-${mm}-${dd}`;
+
+    const dayDate  = new Date(calYear, calMonth, d);
+
+    const dow      = dayDate.getDay();
+
+    const isWeekend  = dow === 0;  // Only Sunday is off; Saturday is a working day
+
+    const isToday    = dateStr === todayStr;
+
+    const isFuture   = dayDate > today && !isToday;
+
+    const isSelected = dateStr === calSelectedDay;
+
+    const recs    = calAttData[dateStr] || [];
+
+    const present = new Set(recs.map(r => r.employee_id)).size;
+
+    const fullDay = recs.filter(r => r.check_out).length;
+
+
+
+    let statusClass = '', dotHtml = '', countHtml = '';
+
+    if (!isWeekend && !isFuture) {
+
+      if (present === 0 && calTotalEmps > 0) {
+
+        statusClass = 'status-absent';
+
+        dotHtml = '<div class="cal-day-dot" style="background:rgba(244,63,94,0.5)"></div>';
+
+      } else if (present > 0) {
+
+        const allFull = fullDay === present;
+
+        statusClass = allFull ? 'status-full' : 'status-half';
+
+        const col = allFull ? 'var(--green)' : '#f59e0b';
+
+        dotHtml   = `<div class="cal-day-dot" style="background:${col}"></div>`;
+
+        countHtml = `<div class="cal-day-count">${present}/${calTotalEmps}</div>`;
+
+      }
+
+    }
+
+    const cls = ['cal-day', isWeekend?'weekend':'', isToday?'today':'',
+
+      isFuture?'future':'', isSelected?'selected':'', statusClass
+
+    ].filter(Boolean).join(' ');
+
+
+
+    html += `<div class="${cls}" onclick="calSelectDay('${dateStr}')">
+
+      <div class="cal-day-num">${d}</div>${dotHtml}${countHtml}
+
+      <div class="cal-day-bar"></div></div>`;
+
+  }
+
+  grid.innerHTML = html;
+
+  if (calSelectedDay) renderCalDayDetail(calSelectedDay);
+
+}
+
+
+
+function calSelectDay(dateStr) {
+
+  const detail = document.getElementById('cal-day-detail');
+
+  if (calSelectedDay === dateStr) {
+
+    calSelectedDay = null;
+
+    if (detail) detail.classList.add('hidden');
+
+    renderCalendar(); return;
+
+  }
+
+  calSelectedDay = dateStr;
+
+  renderCalendar();
+
+  renderCalDayDetail(dateStr);
+
+}
+
+
+
+function renderCalDayDetail(dateStr) {
+
+  const detail = document.getElementById('cal-day-detail');
+
+  if (!detail) return;
+
+  detail.classList.remove('hidden');
+
+  const recs    = calAttData[dateStr] || [];
+
+  const present = new Set(recs.map(r => r.employee_id)).size;
+
+  const fullDay = recs.filter(r => r.check_out).length;
+
+  const d       = new Date(dateStr + 'T00:00:00');
+
+  const label   = d.toLocaleDateString('en-IN', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+
+
+
+  let status, sCls;
+
+  if (recs.length === 0)        { status = 'No Records';                             sCls = 'absent'; }
+
+  else if (fullDay === present) { status = `${present} Present - Full Day`;          sCls = 'full';   }
+
+  else                          { status = `${present} Present - ${fullDay} Full - ${present-fullDay} Partial`; sCls = 'half'; }
+
+
+
+  const rows = recs.length === 0
+
+    ? '<div class="cal-detail-empty">No attendance records for this day.</div>'
+
+    : recs.map(r => {
+
+        const hasOut = !!r.check_out;
+
+        return `<div class="cal-detail-row">
+
+          <div class="cal-detail-name">${r.name}
+
+            <span style="font-size:.68rem;color:var(--text2);font-weight:400;margin-left:5px">${r.employee_id}</span>
+
+          </div>
+
+          <div class="cal-detail-time">
+
+            <span style="color:var(--green)">&#9654; ${r.check_in||'&#8212;'}</span>
+
+            ${hasOut ? `<span style="margin:0 4px;opacity:.4">&#183;</span><span style="color:var(--blue)">&#9664; ${r.check_out}</span>` : ''}
+
+          </div>
+
+          <span class="badge ${hasOut?'badge-present':'badge-in'}" style="font-size:.68rem">${hasOut?'Complete':'In'}</span>
+
+        </div>`;
+
+      }).join('');
+
+
+
+  detail.innerHTML = `
+
+    <div class="cal-detail-header">
+
+      <div class="cal-detail-date">${label}</div>
+
+      <span class="cal-detail-badge ${sCls}">${status}</span>
+
+    </div>
+
+    <div class="cal-detail-list">${rows}</div>`;
+
+}
+
+
+
+function calNavigate(dir) {
+
+  calSelectedDay = null;
+
+  const detail = document.getElementById('cal-day-detail');
+
+  if (detail) detail.classList.add('hidden');
+
+  calMonth += dir;
+
+  if (calMonth > 11) { calMonth = 0;  calYear++; }
+
+  if (calMonth < 0)  { calMonth = 11; calYear--; }
+
+  loadCalendar();
+
+}
+
+
+
+function calGoToday() {
+
+  const now = new Date();
+
+  calSelectedDay = null;
+
+  calYear  = now.getFullYear();
+
+  calMonth = now.getMonth();
+
+  const detail = document.getElementById('cal-day-detail');
+
+  if (detail) detail.classList.add('hidden');
+
+  loadCalendar();
+
+}
+

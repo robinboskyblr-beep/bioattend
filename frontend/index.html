@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Robinbosky – Smart Face Recognition Attendance</title>
+  <meta name="description" content="Robinbosky BioAttend: AI-powered face recognition attendance system for modern organizations. Automated check-in, real-time tracking, and analytics dashboard." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Animated Background -->
+    <div class="bg-grid"></div>
+    <div class="bg-particles" id="particles"></div>
+    <div class="bg-glow glow-1"></div>
+    <div class="bg-glow glow-2"></div>
+
+    <!-- ══════════ LOGIN SCREEN ══════════ -->
+    <div id="login-screen" class="screen active">
+      <div class="login-container">
+        <div class="logo-wrap">
+          <div class="rb-logo-wrap">
+            <img src="/robinboskylogo_cropped.jpg" alt="Robinbosky Logo" class="rb-logo-img" />
+          </div>
+          <div class="logo-text">
+            <h1 class="brand-name rb-brand">Robinbosky</h1>
+            <span class="brand-sub">Smart Face Recognition Attendance</span>
+          </div>
+        </div>
+
+        <div class="login-card glass-card">
+          <!-- Role Tabs -->
+          <div class="role-tabs">
+            <button class="role-tab active" id="tab-admin-btn" onclick="selectRole('admin')">🛡 Admin</button>
+            <button class="role-tab" id="tab-manager-btn" onclick="selectRole('manager')">📋 Manager</button>
+            <button class="role-tab" id="tab-employee-btn" onclick="selectRole('employee')">👤 Employee</button>
+          </div>
+
+          <div id="role-hint" class="role-hint">
+            <span id="role-hint-text">Full system access</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" id="username-label">Username</label>
+            <div class="input-wrap">
+              <span class="input-icon">⬡</span>
+              <input type="text" id="login-username" class="form-input" placeholder="admin" value="admin" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <div class="input-wrap">
+              <span class="input-icon">🔒</span>
+              <input type="password" id="login-password" class="form-input" placeholder="Enter password" value="admin123" />
+            </div>
+          </div>
+
+          <button id="login-btn" class="btn-primary" onclick="doLogin()">
+            <span class="btn-glow"></span>
+            <span id="login-btn-text">Access System</span>
+          </button>
+          <p id="login-error" class="error-msg hidden"></p>
+
+
+        </div>
+
+
+      </div>
+    </div>
+
+    <!-- ══════════ KIOSK SCREEN ══════════ -->
+    <div id="kiosk-screen" class="screen">
+      <!-- Full-screen kiosk layout -->
+      <div class="kiosk-full">
+
+        <!-- Top bar -->
+        <div class="kiosk-topbar">
+          <button class="kiosk-back-btn" onclick="showScreen('login-screen')">← Back to Login</button>
+          <div class="kiosk-brand-row">
+            <img src="/robinboskylogo_cropped.jpg" alt="Robinbosky" style="width:28px;height:28px;border-radius:6px;object-fit:contain;background:#fff;padding:1px">
+            <span class="kiosk-brand-name">Robinbosky</span>
+            <span class="kiosk-brand-tag">Employee Attendance</span>
+          </div>
+          <div class="kiosk-clock-block">
+            <div class="kiosk-time" id="kiosk-time"></div>
+            <div class="kiosk-date" id="kiosk-date"></div>
+          </div>
+        </div>
+
+        <!-- Main body: camera + instructions -->
+        <div class="kiosk-main">
+
+          <!-- Camera column -->
+          <div class="kiosk-cam-col">
+            <div class="kiosk-cam-card glass-card">
+              <div class="kiosk-cam-label">
+                <span class="kiosk-live-dot"></span> LIVE CAMERA
+              </div>
+              <div class="kiosk-cam-frame">
+                <video id="kiosk-video" autoplay playsinline muted></video>
+                <canvas id="kiosk-canvas" style="display:none"></canvas>
+                <!-- Animated scan line -->
+                <div class="kiosk-scan-line" id="scan-line"></div>
+                <!-- Face guide oval -->
+                <div class="kiosk-face-guide">
+                  <svg viewBox="0 0 240 280" class="kiosk-guide-svg">
+                    <ellipse cx="120" cy="130" rx="80" ry="100" fill="none" stroke="rgba(0,212,255,0.4)" stroke-width="2.5" stroke-dasharray="8 5"/>
+                    <circle cx="95" cy="108" r="10" fill="none" stroke="rgba(0,212,255,0.4)" stroke-width="2"/>
+                    <circle cx="145" cy="108" r="10" fill="none" stroke="rgba(0,212,255,0.4)" stroke-width="2"/>
+                    <path d="M100,160 Q120,178 140,160" fill="none" stroke="rgba(0,212,255,0.4)" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                </div>
+                <!-- Corner brackets -->
+                <span class="corner tl"></span><span class="corner tr"></span>
+                <span class="corner bl"></span><span class="corner br"></span>
+              </div>
+              <!-- Status bar -->
+              <div class="kiosk-status-bar">
+                <span class="kiosk-status-dot" id="kiosk-status-dot"></span>
+                <span id="kiosk-status-text">Position your face inside the oval guide</span>
+              </div>
+              <!-- Scan button row -->
+              <div class="kiosk-btn-row">
+                <button id="scan-btn" class="btn-kiosk-scan" onclick="startScan()">
+                  <span class="kiosk-scan-icon">◉</span>
+                  <span id="scan-btn-text">Scan Attendance</span>
+                </button>
+                <button id="kiosk-auto-btn" class="btn-kiosk-auto" onclick="toggleKioskAuto()" title="Auto scan every 3 seconds">
+                  ⚡ Auto
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right info column -->
+          <div class="kiosk-info-col">
+            <div class="kiosk-instructions-card glass-card">
+              <div class="kiosk-inst-title">How to Scan</div>
+              <div class="kiosk-inst-list">
+                <div class="kiosk-inst-item">
+                  <div class="kiosk-inst-num">1</div>
+                  <div>
+                    <div class="kiosk-inst-head">Stand in front of camera</div>
+                    <div class="kiosk-inst-sub">Keep ~50–80 cm distance</div>
+                  </div>
+                </div>
+                <div class="kiosk-inst-item">
+                  <div class="kiosk-inst-num">2</div>
+                  <div>
+                    <div class="kiosk-inst-head">Good lighting</div>
+                    <div class="kiosk-inst-sub">Face the light source</div>
+                  </div>
+                </div>
+                <div class="kiosk-inst-item">
+                  <div class="kiosk-inst-num">3</div>
+                  <div>
+                    <div class="kiosk-inst-head">Look directly at camera</div>
+                    <div class="kiosk-inst-sub">Remove sunglasses or masks</div>
+                  </div>
+                </div>
+                <div class="kiosk-inst-item">
+                  <div class="kiosk-inst-num">4</div>
+                  <div>
+                    <div class="kiosk-inst-head">Press Scan or use Auto mode</div>
+                    <div class="kiosk-inst-sub">Auto scans every 3 seconds</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="kiosk-today-card glass-card">
+              <div class="kiosk-today-title">Today's Attendance</div>
+              <div id="kiosk-today-log" class="kiosk-today-log">
+                <div class="kiosk-today-empty">No check-ins yet today</div>
+              </div>
+              <div class="kiosk-today-count" id="kiosk-today-count">0 entries</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ══ RESULT POPUP OVERLAY ══ -->
+      <div id="kiosk-popup" class="kiosk-popup hidden">
+        <div class="kiosk-popup-card" id="kiosk-popup-card">
+          <div class="kiosk-popup-avatar" id="kiosk-popup-avatar">?</div>
+          <div class="kiosk-popup-greeting" id="kiosk-popup-greeting">Welcome!</div>
+          <div class="kiosk-popup-name" id="kiosk-popup-name"></div>
+          <div class="kiosk-popup-action" id="kiosk-popup-action"></div>
+          <div class="kiosk-popup-time" id="kiosk-popup-time"></div>
+          <div class="kiosk-popup-conf" id="kiosk-popup-conf"></div>
+          <div class="kiosk-popup-bar">
+            <div class="kiosk-popup-progress" id="kiosk-popup-progress"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ══════════ EMPLOYEE FACE SCAN SCREEN ══════════ -->
+    <div id="employee-screen" class="screen">
+      <div class="emp-kiosk-wrap">
+
+        <!-- Header -->
+        <div class="emp-kiosk-header">
+          <div class="emp-kiosk-brand">
+            <svg viewBox="0 0 40 40" width="32" height="32">
+              <defs><linearGradient id="ekGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#00d4ff"/><stop offset="100%" style="stop-color:#0051ff"/></linearGradient></defs>
+              <circle cx="20" cy="20" r="18" fill="none" stroke="url(#ekGrad)" stroke-width="2"/>
+              <ellipse cx="20" cy="19" rx="8" ry="9" fill="none" stroke="#00d4ff" stroke-width="1.5"/>
+              <circle cx="16" cy="17" r="1.5" fill="#00d4ff"/>
+              <circle cx="24" cy="17" r="1.5" fill="#00d4ff"/>
+            </svg>
+            <span>BioAttend</span>
+          </div>
+          <div class="emp-kiosk-greeting">
+            <span id="emp-greeting">Welcome</span>
+            <span class="emp-name-badge" id="emp-display-name"></span>
+          </div>
+          <div class="emp-kiosk-clock-wrap">
+            <div class="emp-kiosk-time" id="emp-kiosk-time"></div>
+            <div class="emp-kiosk-date" id="emp-kiosk-date"></div>
+          </div>
+          <button class="emp-logout-btn" onclick="doLogout()">⏻ Logout</button>
+        </div>
+
+        <!-- Body -->
+        <div class="emp-kiosk-body">
+
+          <!-- Camera column -->
+          <div class="emp-cam-col">
+            <div class="emp-cam-card glass-card">
+              <div class="scan-cam-label">
+                <span class="scan-dot"></span> LIVE CAMERA
+              </div>
+              <div class="cam-frame emp-cam-frame">
+                <video id="emp-video" autoplay playsinline muted></video>
+                <canvas id="emp-canvas" style="display:none"></canvas>
+                <div class="cam-corners">
+                  <span class="corner tl"></span><span class="corner tr"></span>
+                  <span class="corner bl"></span><span class="corner br"></span>
+                </div>
+                <div class="scan-line" id="emp-scan-line"></div>
+                <div class="face-guide">
+                  <svg viewBox="0 0 200 220" class="face-guide-svg">
+                    <ellipse cx="100" cy="105" rx="62" ry="74" fill="none" stroke="rgba(0,212,255,0.35)" stroke-width="2" stroke-dasharray="6 4"/>
+                    <circle cx="76" cy="88" r="8" fill="none" stroke="rgba(0,212,255,0.4)" stroke-width="1.5"/>
+                    <circle cx="124" cy="88" r="8" fill="none" stroke="rgba(0,212,255,0.4)" stroke-width="1.5"/>
+                    <path d="M82,130 Q100,145 118,130" fill="none" stroke="rgba(0,212,255,0.4)" stroke-width="1.5" stroke-linecap="round"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="scan-status-bar">
+                <span class="scan-status-dot" id="emp-status-dot"></span>
+                <span id="emp-status-text">Position your face inside the guide</span>
+              </div>
+              <div class="scan-btn-row">
+                <button id="emp-scan-btn" class="btn-scan-station" onclick="empScan()">
+                  <span class="btn-scan-icon">◉</span>
+                  <span id="emp-scan-label">Scan My Attendance</span>
+                </button>
+                <button id="emp-auto-btn" class="btn-auto-toggle" onclick="toggleEmpAutoScan()" title="Auto scan every 3s">⚡ Auto</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Result column -->
+          <div class="emp-result-col">
+
+            <!-- Result card -->
+            <div id="emp-result-card" class="scan-result-card glass-card hidden">
+              <div class="src-icon" id="emp-src-icon">✅</div>
+              <div class="src-name" id="emp-src-name">—</div>
+              <div class="src-dept" id="emp-src-dept"></div>
+              <div class="src-action" id="emp-src-action"></div>
+              <div class="src-time" id="emp-src-time"></div>
+              <div class="src-conf" id="emp-src-conf"></div>
+            </div>
+
+            <!-- Idle card -->
+            <div id="emp-idle-card" class="scan-idle-card glass-card">
+              <div class="idle-icon">👤</div>
+              <div class="idle-title">Ready to scan</div>
+              <div class="idle-sub">Press "Scan My Attendance" to clock in or out</div>
+              <ul class="idle-tips">
+                <li>💡 Ensure good lighting on your face</li>
+                <li>📏 Stand ~50–80 cm from camera</li>
+                <li>😐 Look directly at the lens</li>
+                <li>🚫 Remove sunglasses or masks</li>
+              </ul>
+            </div>
+
+            <!-- My Today Card -->
+            <div class="emp-today-card glass-card">
+              <div class="todays-log-header">
+                <span class="card-title" style="margin:0">My Attendance Today</span>
+                <span id="emp-today-status-badge" class="log-entry-badge"></span>
+              </div>
+              <div id="emp-today-info" class="emp-today-info">
+                <div class="emp-today-row"><span class="emp-today-label">Check In</span><span id="emp-checkin-val" class="emp-today-val">—</span></div>
+                <div class="emp-today-row"><span class="emp-today-label">Check Out</span><span id="emp-checkout-val" class="emp-today-val">—</span></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ DASHBOARD (Admin) ══════════ -->
+    <div id="dashboard-screen" class="screen">
+      <!-- Sidebar -->
+      <nav class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+          <div class="sidebar-logo-icon">
+            <img src="/robinboskylogo_cropped.jpg" alt="Robinbosky" style="width:36px;height:36px;border-radius:8px;object-fit:contain;background:#fff;padding:2px">
+          </div>
+          <div>
+            <div class="sidebar-brand">Robinbosky</div>
+            <div class="sidebar-brand-sub">Admin Portal</div>
+          </div>
+        </div>
+
+        <ul class="nav-list">
+          <li class="nav-item active" data-tab="tab-dashboard" onclick="switchTab(this)">
+            <span class="nav-icon">📊</span><span class="nav-label">Dashboard</span>
+          </li>
+
+          <li class="nav-item" data-tab="tab-register" onclick="switchTab(this)">
+            <span class="nav-icon">➕</span><span class="nav-label">Register</span>
+          </li>
+          <li class="nav-item" data-tab="tab-employees" onclick="switchTab(this)">
+            <span class="nav-icon">👥</span><span class="nav-label">Employees</span>
+          </li>
+          <li class="nav-item" data-tab="tab-attendance" onclick="switchTab(this)">
+            <span class="nav-icon">📋</span><span class="nav-label">Attendance</span>
+          </li>
+          <li class="nav-item" data-tab="tab-reports" onclick="switchTab(this)">
+            <span class="nav-icon">📈</span><span class="nav-label">Reports</span>
+          </li>
+        </ul>
+
+        <div class="sidebar-footer">
+          <div class="user-info">
+            <div class="user-avatar">A</div>
+            <div>
+              <div class="user-name" id="sidebar-user-name">Administrator</div>
+              <div class="user-role">Admin</div>
+            </div>
+          </div>
+          <button class="logout-btn" onclick="doLogout()">⏻ Logout</button>
+        </div>
+      </nav>
+
+      <!-- Main Content -->
+      <main class="main-content">
+        <div class="topbar">
+          <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+          <div class="topbar-title" id="topbar-title">Dashboard</div>
+          <div class="topbar-time" id="topbar-time"></div>
+        </div>
+
+        <!-- TAB: DASHBOARD -->
+        <div id="tab-dashboard" class="tab-content active">
+          <div class="stats-grid">
+            <div class="stat-card glass-card">
+              <div class="stat-icon blue">👥</div>
+              <div class="stat-info">
+                <div class="stat-value" id="stat-total">--</div>
+                <div class="stat-label">Total Employees</div>
+              </div>
+              <div class="stat-trend up">↑</div>
+            </div>
+            <div class="stat-card glass-card">
+              <div class="stat-icon green">✅</div>
+              <div class="stat-info">
+                <div class="stat-value" id="stat-present">--</div>
+                <div class="stat-label">Present Today</div>
+              </div>
+              <div class="stat-trend up">↑</div>
+            </div>
+            <div class="stat-card glass-card">
+              <div class="stat-icon red">❌</div>
+              <div class="stat-info">
+                <div class="stat-value" id="stat-absent">--</div>
+                <div class="stat-label">Absent Today</div>
+              </div>
+              <div class="stat-trend down">↓</div>
+            </div>
+            <div class="stat-card glass-card">
+              <div class="stat-icon purple">📊</div>
+              <div class="stat-info">
+                <div class="stat-value" id="stat-rate">--%</div>
+                <div class="stat-label">Attendance Rate</div>
+              </div>
+              <div class="stat-trend up">↑</div>
+            </div>
+          </div>
+
+          <div class="dashboard-grid">
+            <div class="chart-card glass-card">
+              <h3 class="card-title">Weekly Attendance</h3>
+              <canvas id="weekly-chart"></canvas>
+            </div>
+            <div class="today-card glass-card">
+              <h3 class="card-title">Today's Check-ins</h3>
+              <div id="today-list" class="today-list"></div>
+            </div>
+          </div>
+
+          <!-- Monthly Attendance Calendar -->
+          <div class="cal-card glass-card">
+            <div class="cal-header">
+              <div class="cal-title-block">
+                <div class="cal-title">📅 Monthly Attendance Calendar</div>
+                <div class="cal-sub" id="cal-subtitle">Showing attendance for this month</div>
+              </div>
+              <div class="cal-nav">
+                <button class="cal-nav-btn" id="cal-prev" onclick="calNavigate(-1)">‹</button>
+                <span class="cal-month-label" id="cal-month-label"></span>
+                <button class="cal-nav-btn" id="cal-next" onclick="calNavigate(1)">›</button>
+                <button class="cal-today-btn" onclick="calGoToday()">Today</button>
+              </div>
+            </div>
+            <div class="cal-legend">
+              <span class="cal-leg-item"><span class="cal-dot dot-full"></span>Full Day</span>
+              <span class="cal-leg-item"><span class="cal-dot dot-half"></span>Partial</span>
+              <span class="cal-leg-item"><span class="cal-dot dot-absent"></span>Absent</span>
+              <span class="cal-leg-item"><span class="cal-dot dot-weekend"></span>Sunday</span>
+            </div>
+            <div class="cal-grid-wrap">
+              <div class="cal-weekdays">
+                <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+              </div>
+              <div class="cal-days" id="cal-days"></div>
+            </div>
+            <div id="cal-day-detail" class="cal-day-detail hidden"></div>
+          </div>
+        </div>
+
+
+        <!-- TAB: REGISTER -->
+        <div id="tab-register" class="tab-content">
+          <div class="register-container">
+            <div class="register-cam-card glass-card">
+              <h3 class="card-title">📷 Capture Face Photos</h3>
+              <p class="card-sub">Capture 5+ photos from different angles for best accuracy</p>
+              <div class="cam-frame reg-cam">
+                <video id="reg-video" autoplay playsinline muted></video>
+                <canvas id="reg-canvas" style="display:none"></canvas>
+                <div class="cam-corners">
+                  <span class="corner tl"></span><span class="corner tr"></span>
+                  <span class="corner bl"></span><span class="corner br"></span>
+                </div>
+              </div>
+              <div class="capture-controls">
+                <button class="btn-primary" onclick="capturePhoto()">📷 Capture Photo</button>
+                <button class="btn-danger" onclick="clearCaptures()">🗑 Clear All</button>
+              </div>
+              <div class="photo-strip" id="photo-strip"></div>
+              <div class="capture-count" id="capture-count">0 photos captured</div>
+            </div>
+
+            <div class="register-form-card glass-card">
+              <h3 class="card-title">➕ Employee Information</h3>
+              <form id="reg-form" onsubmit="registerEmployee(event)">
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label">Full Name *</label>
+                    <input type="text" id="reg-name" class="form-input" placeholder="John Smith" required />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Employee ID *</label>
+                    <input type="text" id="reg-empid" class="form-input" placeholder="EMP001" required />
+                  </div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label">Department *</label>
+                    <select id="reg-dept" class="form-input" required>
+                      <option value="">Select Department</option>
+                      <option>Engineering</option>
+                      <option>HR</option>
+                      <option>Finance</option>
+                      <option>Marketing</option>
+                      <option>Operations</option>
+                      <option>Sales</option>
+                      <option>IT</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Role *</label>
+                    <input type="text" id="reg-role" class="form-input" placeholder="Software Engineer" required />
+                  </div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label">Email *</label>
+                    <input type="email" id="reg-email" class="form-input" placeholder="john@company.com" required />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Phone</label>
+                    <input type="tel" id="reg-phone" class="form-input" placeholder="+91 98765 43210" />
+                  </div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label">Shift Start</label>
+                    <input type="time" id="reg-shift-start" class="form-input" value="09:00" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Shift End</label>
+                    <input type="time" id="reg-shift-end" class="form-input" value="18:00" />
+                  </div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label">🍽 Lunch Break Start</label>
+                    <input type="time" id="reg-lunch-start" class="form-input" value="13:00" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">🍽 Lunch Break End</label>
+                    <input type="time" id="reg-lunch-end" class="form-input" value="14:00" />
+                  </div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label">💰 Monthly Salary (₹)</label>
+                    <input type="number" id="reg-salary" class="form-input" placeholder="e.g. 35000" min="0" step="500" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">🔐 Portal Password</label>
+                    <input type="text" id="reg-password" class="form-input" placeholder="Default: emp123" value="emp123" />
+                  </div>
+                </div>
+                <button type="submit" class="btn-primary full-width" id="reg-submit-btn">
+                  <span class="btn-glow"></span>
+                  Register Employee
+                </button>
+                <div id="reg-status" class="reg-status hidden"></div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB: EMPLOYEES -->
+        <div id="tab-employees" class="tab-content">
+          <div class="section-header">
+            <h2 class="section-title">Employee Directory</h2>
+            <div class="section-actions">
+              <input type="text" id="emp-search" class="form-input search-input" placeholder="🔍 Search employees..." oninput="filterEmployees()" />
+            </div>
+          </div>
+          <div id="employees-grid" class="employees-grid"></div>
+        </div>
+
+        <!-- TAB: ATTENDANCE -->
+        <div id="tab-attendance" class="tab-content">
+          <div class="section-header">
+            <h2 class="section-title">Attendance Records</h2>
+            <div class="section-actions">
+              <input type="date" id="att-start" class="form-input" />
+              <input type="date" id="att-end" class="form-input" />
+              <button class="btn-primary" onclick="filterAttendance()">Filter</button>
+              <button class="btn-secondary" onclick="exportAttendance()">⬇ Export CSV</button>
+            </div>
+          </div>
+
+          <!-- Manual Attendance -->
+          <div class="glass-card manual-att-card">
+            <h3 class="card-title">Manual Attendance Entry</h3>
+            <div class="manual-form">
+              <select id="manual-emp" class="form-input">
+                <option value="">Select Employee</option>
+              </select>
+              <select id="manual-type" class="form-input">
+                <option value="check_in">Check In</option>
+                <option value="check_out">Check Out</option>
+              </select>
+              <input type="date" id="manual-date" class="form-input" />
+              <button class="btn-primary" onclick="submitManualAttendance()">Submit</button>
+            </div>
+          </div>
+
+          <div class="table-wrap glass-card">
+            <table class="att-table" id="att-table">
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Department</th>
+                  <th>Date</th>
+                  <th>🟢 IN (AM)</th>
+                  <th>🔴 OUT (Lunch)</th>
+                  <th>🟢 IN (PM)</th>
+                  <th>🔴 OUT (Day)</th>
+                  <th>Status</th>
+                  <th>Punches</th>
+                </tr>
+              </thead>
+              <tbody id="att-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- TAB: REPORTS -->
+        <div id="tab-reports" class="tab-content">
+          <div class="reports-grid">
+            <div class="glass-card report-card">
+              <div class="report-icon">📊</div>
+              <h3>Monthly Summary</h3>
+              <p>Generate monthly attendance overview and analytics</p>
+              <button class="btn-primary" onclick="generateMonthlyReport()">Generate Report</button>
+            </div>
+            <div class="glass-card report-card">
+              <div class="report-icon">👤</div>
+              <h3>Employee Report</h3>
+              <p>Individual attendance history and performance</p>
+              <select id="report-emp-select" class="form-input" style="margin:10px 0"></select>
+              <button class="btn-primary" onclick="generateEmployeeReport()">Generate Report</button>
+            </div>
+            <div class="glass-card report-card">
+              <div class="report-icon">⬇</div>
+              <h3>Export Data</h3>
+              <p>Download complete attendance data as CSV</p>
+              <button class="btn-primary" onclick="exportAllData()">Export All CSV</button>
+            </div>
+          </div>
+
+          <!-- Payroll / Salary Section -->
+          <div class="payroll-section glass-card">
+            <div class="payroll-section-header">
+              <div>
+                <div class="payroll-section-title">💰 Salary &amp; Payroll Report</div>
+                <div class="payroll-section-sub">Calculates gross earnings, late deductions, and net salary per employee</div>
+              </div>
+              <div class="payroll-filters">
+                <input type="date" id="payroll-start" class="form-input" />
+                <input type="date" id="payroll-end" class="form-input" />
+                <select id="payroll-emp" class="form-input"><option value="">All Employees</option></select>
+                <button class="btn-primary" onclick="generatePayrollReport()">📊 Calculate</button>
+                <button class="btn-secondary" onclick="exportPayrollCSV()">⬇ Export CSV</button>
+              </div>
+            </div>
+            <div id="payroll-output" class="payroll-output hidden"></div>
+          </div>
+
+          <div id="report-output" class="report-output glass-card hidden"></div>
+        </div>
+
+      </main>
+    </div>
+
+    <!-- Edit Employee Modal -->
+    <div id="edit-modal" class="modal-overlay hidden" onclick="handleModalBackdrop(event)">
+      <div class="modal-card glass-card">
+        <div class="modal-header">
+          <div>
+            <h3 class="modal-title">✏️ Edit Employee</h3>
+            <div class="modal-sub" id="edit-modal-sub"></div>
+          </div>
+          <button class="modal-close-btn" onclick="closeEditModal()">✕</button>
+        </div>
+        <form id="edit-form" onsubmit="saveEmployee(event)">
+          <input type="hidden" id="edit-empid" />
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Full Name *</label>
+              <input type="text" id="edit-name" class="form-input" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Department *</label>
+              <select id="edit-dept" class="form-input" required>
+                <option>Engineering</option>
+                <option>HR</option>
+                <option>Finance</option>
+                <option>Marketing</option>
+                <option>Operations</option>
+                <option>Sales</option>
+                <option>IT</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Role *</label>
+              <input type="text" id="edit-role" class="form-input" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Email *</label>
+              <input type="email" id="edit-email" class="form-input" required />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Phone</label>
+              <input type="tel" id="edit-phone" class="form-input" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Employee ID</label>
+              <input type="text" id="edit-empid-display" class="form-input" disabled style="opacity:.5;cursor:not-allowed" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Shift Start</label>
+              <input type="time" id="edit-shift-start" class="form-input" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Shift End</label>
+              <input type="time" id="edit-shift-end" class="form-input" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">🍽 Lunch Break Start</label>
+              <input type="time" id="edit-lunch-start" class="form-input" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">🍽 Lunch Break End</label>
+              <input type="time" id="edit-lunch-end" class="form-input" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">💰 Monthly Salary (₹)</label>
+              <input type="number" id="edit-salary" class="form-input" placeholder="e.g. 35000" min="0" step="500" />
+            </div>
+            <div class="form-group"></div>
+          </div>
+          <div class="modal-footer">
+            <button type="submit" class="btn-primary" id="edit-save-btn">
+              <span class="btn-glow"></span>💾 Save Changes
+            </button>
+            <button type="button" class="btn-secondary" onclick="closeEditModal()">Cancel</button>
+          </div>
+          <div id="edit-status" class="reg-status hidden" style="margin-top:8px"></div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

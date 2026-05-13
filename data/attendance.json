@@ -1,0 +1,29 @@
+{
+  "records": [
+    {
+      "id": "832d4ecc-c6fc-4f74-a41f-054a325a02f6",
+      "employee_id": "emp01",
+      "name": "jeevatharani",
+      "department": "Engineering",
+      "date": "2026-05-13",
+      "check_in": "09:28:37",
+      "check_out": "09:28:40",
+      "status": "present",
+      "confidence": 95.2,
+      "timestamp": "2026-05-13T09:28:37.703395",
+      "check_in_2": "14:28:46"
+    },
+    {
+      "id": "e8c7df80-3857-4959-87af-76679886b1df",
+      "employee_id": "emp02",
+      "name": "varshimi",
+      "department": "Engineering",
+      "date": "2026-05-13",
+      "check_in": "09:39:28",
+      "check_out": "09:39:31",
+      "status": "present",
+      "confidence": 98.6,
+      "timestamp": "2026-05-13T09:39:28.719594"
+    }
+  ]
+}
