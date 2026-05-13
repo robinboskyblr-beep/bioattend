@@ -1,6 +1,6 @@
 
 
-const API = 'https://bioattend-3p0x.onrender.com/api';
+const API = 'https://bioattend-1.onrender.com/api';
 
 let scanStationClockInterval = null;
 
