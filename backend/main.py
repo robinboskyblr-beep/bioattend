@@ -28,26 +28,13 @@ if not firebase_admin._apps:
     _env_creds = os.environ.get("FIREBASE_CREDENTIALS")
     if _env_creds:
         # Cloud / Render: credentials stored as JSON string in env var
-        import tempfile
-        _tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-        _tmp.write(_env_creds)
-        _tmp.close()
-        cred = credentials.Certificate(_tmp.name)
+        cred_dict = json.loads(_env_creds)
+        cred = credentials.Certificate(cred_dict)
     else:
         # Local development: load from file
         _SA_PATH = Path(__file__).parent / "bioattend-c4f14-firebase-adminsdk-fbsvc-0008324a24.json"
-        import os
-import os
-import json
-import firebase_admin
-from firebase_admin import credentials
-
-firebase_json = os.environ.get("FIREBASE_CREDENTIALS")
-
-cred_dict = json.loads(firebase_json)
-cred = credentials.Certificate(cred_dict)
-
-firebase_admin.initialize_app(cred)
+        cred = credentials.Certificate(str(_SA_PATH))
+    firebase_admin.initialize_app(cred)
 
 db_fs = firestore.client()
 
