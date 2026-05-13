@@ -2215,3 +2215,74 @@ function calGoToday() {
 
 }
 
+
+
+/* Settings: Change Credentials */
+
+function showSettingStatus(id, msg, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'reg-status ' + (ok ? 'success' : 'error');
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 5000);
+}
+
+async function changeAdminCreds() {
+  const oldPw  = document.getElementById('adm-old-pw').value.trim();
+  const newPw  = document.getElementById('adm-new-pw').value.trim();
+  const confPw = document.getElementById('adm-confirm-pw').value.trim();
+  if (!oldPw || !newPw) return showSettingStatus('adm-status', 'Please fill in all password fields.', false);
+  if (newPw !== confPw) return showSettingStatus('adm-status', 'New passwords do not match.', false);
+  try {
+    const r = await fetch(\/auth/change-password, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', role: 'admin', old_password: oldPw, new_password: newPw })
+    });
+    const d = await r.json();
+    if (r.ok && d.success) {
+      showSettingStatus('adm-status', 'Admin password updated!', true);
+      ['adm-old-pw','adm-new-pw','adm-confirm-pw'].forEach(id => document.getElementById(id).value = '');
+    } else { showSettingStatus('adm-status', d.detail || 'Failed.', false); }
+  } catch { showSettingStatus('adm-status', 'Cannot reach server.', false); }
+}
+
+async function changeManagerCreds() {
+  const oldPw  = document.getElementById('mgr-old-pw').value.trim();
+  const newPw  = document.getElementById('mgr-new-pw').value.trim();
+  const confPw = document.getElementById('mgr-confirm-pw').value.trim();
+  if (!oldPw || !newPw) return showSettingStatus('mgr-status', 'Please fill in all password fields.', false);
+  if (newPw !== confPw) return showSettingStatus('mgr-status', 'New passwords do not match.', false);
+  try {
+    const r = await fetch(\/auth/change-password, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'manager', role: 'manager', old_password: oldPw, new_password: newPw })
+    });
+    const d = await r.json();
+    if (r.ok && d.success) {
+      showSettingStatus('mgr-status', 'Manager password updated!', true);
+      ['mgr-old-pw','mgr-new-pw','mgr-confirm-pw'].forEach(id => document.getElementById(id).value = '');
+    } else { showSettingStatus('mgr-status', d.detail || 'Failed.', false); }
+  } catch { showSettingStatus('mgr-status', 'Cannot reach server.', false); }
+}
+
+async function resetEmployeePassword() {
+  const empId  = document.getElementById('emp-reset-id').value.trim();
+  const oldPw  = document.getElementById('emp-reset-old').value.trim();
+  const newPw  = document.getElementById('emp-reset-new').value.trim();
+  const confPw = document.getElementById('emp-reset-confirm').value.trim();
+  if (!empId)           return showSettingStatus('emp-reset-status', 'Please enter an Employee ID.', false);
+  if (!oldPw || !newPw) return showSettingStatus('emp-reset-status', 'Please fill in all password fields.', false);
+  if (newPw !== confPw) return showSettingStatus('emp-reset-status', 'New passwords do not match.', false);
+  try {
+    const r = await fetch(\/auth/change-password, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: empId, role: 'employee', old_password: oldPw, new_password: newPw })
+    });
+    const d = await r.json();
+    if (r.ok && d.success) {
+      showSettingStatus('emp-reset-status', 'Password for ' + empId + ' updated!', true);
+      ['emp-reset-id','emp-reset-old','emp-reset-new','emp-reset-confirm'].forEach(id => document.getElementById(id).value = '');
+    } else { showSettingStatus('emp-reset-status', d.detail || 'Failed.', false); }
+  } catch { showSettingStatus('emp-reset-status', 'Cannot reach server.', false); }
+}
