@@ -650,6 +650,59 @@
           </div>
 
           <div id="report-output" class="report-output glass-card hidden"></div>
+
+          <!-- BACKUP PANEL -->
+          <div class="glass-card" style="margin-top:24px;padding:28px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
+              <div>
+                <div style="font-size:1.1rem;font-weight:700;color:var(--text-primary)">💾 Daily Backup &amp; Export</div>
+                <div style="font-size:.83rem;color:var(--text-muted);margin-top:3px">Download attendance &amp; employee data as CSV — save to Google Drive or local storage</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <span style="font-size:.8rem;color:var(--text-muted)">⏰ Auto-backup at:</span>
+                <input type="time" id="auto-backup-time" class="form-input" value="18:00" style="width:110px;padding:6px 10px" />
+                <button id="auto-backup-btn" class="btn-secondary" onclick="toggleAutoBackup()" style="padding:7px 14px;font-size:.82rem">▶ Start Auto</button>
+                <span id="auto-backup-status" style="font-size:.78rem;color:var(--text-muted)"></span>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">
+
+              <!-- Today's Backup -->
+              <div style="background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.15);border-radius:12px;padding:20px">
+                <div style="font-size:1rem;font-weight:600;margin-bottom:6px">📅 Today's Attendance</div>
+                <div style="font-size:.82rem;color:var(--text-muted);margin-bottom:14px">Clock-in/out records for today with employee details</div>
+                <button class="btn-primary" onclick="backupToday()" style="width:100%">
+                  <span class="btn-glow"></span>⬇ Download Today's Backup
+                </button>
+              </div>
+
+              <!-- Date Range Backup -->
+              <div style="background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.15);border-radius:12px;padding:20px">
+                <div style="font-size:1rem;font-weight:600;margin-bottom:6px">📆 Date Range Backup</div>
+                <div style="display:flex;gap:8px;margin-bottom:10px">
+                  <input type="date" id="backup-start" class="form-input" style="flex:1;padding:6px 8px;font-size:.82rem" />
+                  <input type="date" id="backup-end" class="form-input" style="flex:1;padding:6px 8px;font-size:.82rem" />
+                </div>
+                <button class="btn-primary" onclick="backupRange()" style="width:100%;background:linear-gradient(135deg,#7c3aed,#4f46e5)">
+                  <span class="btn-glow"></span>⬇ Download Range Backup
+                </button>
+              </div>
+
+              <!-- Employee Directory -->
+              <div style="background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.15);border-radius:12px;padding:20px">
+                <div style="font-size:1rem;font-weight:600;margin-bottom:6px">👥 Employee Directory</div>
+                <div style="font-size:.82rem;color:var(--text-muted);margin-bottom:14px">Full employee list with shifts, contact info &amp; salary</div>
+                <button class="btn-primary" onclick="backupEmployees()" style="width:100%;background:linear-gradient(135deg,#059669,#047857)">
+                  <span class="btn-glow"></span>⬇ Download Employee Directory
+                </button>
+              </div>
+
+            </div>
+
+            <div id="backup-log" style="margin-top:16px;font-size:.82rem;color:var(--text-muted)"></div>
+          </div>
+
         </div>
 
         <!-- TAB: SETTINGS -->

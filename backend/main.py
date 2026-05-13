@@ -687,6 +687,82 @@ async def calculate_payroll(
     return {"payroll": payroll, "period": {"start": start_date, "end": end_date}}
 
 # ─────────────────────────────────────────────
+# Backup Endpoints
+# ─────────────────────────────────────────────
+
+@app.get("/api/backup/daily")
+async def backup_daily(target_date: Optional[str] = None):
+    """Return full attendance records for a given date (default: today)."""
+    if not target_date:
+        target_date = date.today().strftime("%Y-%m-%d")
+    records = get_today_records(target_date)
+    records.sort(key=lambda r: (r.get("employee_id", ""), r.get("timestamp", "")))
+    all_emps = {e["id"]: e for e in get_all_employees()}
+
+    # Enrich records with employee info
+    enriched = []
+    for r in records:
+        emp = all_emps.get(r.get("employee_id"), {})
+        enriched.append({
+            "date":           r.get("date", target_date),
+            "employee_id":    r.get("employee_id", ""),
+            "name":           r.get("name", ""),
+            "department":     r.get("department", ""),
+            "role":           emp.get("role", ""),
+            "email":          emp.get("email", ""),
+            "phone":          emp.get("phone", ""),
+            "shift_start":    emp.get("shift_start", ""),
+            "shift_end":      emp.get("shift_end", ""),
+            "clock_in":       r.get("check_in", ""),
+            "lunch_out":      r.get("check_out", ""),
+            "lunch_in":       r.get("check_in_2", ""),
+            "clock_out":      r.get("check_out_2", ""),
+            "status":         r.get("status", "present"),
+            "confidence":     r.get("confidence", ""),
+            "manual":         r.get("manual", False),
+        })
+    return {"date": target_date, "records": enriched, "total": len(enriched)}
+
+@app.get("/api/backup/range")
+async def backup_range(start_date: Optional[str] = None, end_date: Optional[str] = None):
+    """Return attendance records for a date range with enriched employee data."""
+    records = get_attendance_by_filters(start_date=start_date, end_date=end_date)
+    records.sort(key=lambda r: (r.get("date", ""), r.get("employee_id", "")))
+    all_emps = {e["id"]: e for e in get_all_employees()}
+    enriched = []
+    for r in records:
+        emp = all_emps.get(r.get("employee_id"), {})
+        enriched.append({
+            "date":        r.get("date", ""),
+            "employee_id": r.get("employee_id", ""),
+            "name":        r.get("name", ""),
+            "department":  r.get("department", ""),
+            "role":        emp.get("role", ""),
+            "email":       emp.get("email", ""),
+            "phone":       emp.get("phone", ""),
+            "shift_start": emp.get("shift_start", ""),
+            "shift_end":   emp.get("shift_end", ""),
+            "clock_in":    r.get("check_in", ""),
+            "lunch_out":   r.get("check_out", ""),
+            "lunch_in":    r.get("check_in_2", ""),
+            "clock_out":   r.get("check_out_2", ""),
+            "status":      r.get("status", ""),
+            "confidence":  r.get("confidence", ""),
+            "manual":      r.get("manual", False),
+        })
+    return {"start_date": start_date, "end_date": end_date, "records": enriched, "total": len(enriched)}
+
+@app.get("/api/backup/employees")
+async def backup_employees():
+    """Return full employee directory (excluding embeddings & passwords)."""
+    all_emps = get_all_employees()
+    safe = []
+    for e in all_emps:
+        safe.append({k: v for k, v in e.items() if k not in ("embeddings", "password", "face_images")})
+    safe.sort(key=lambda e: e.get("name", ""))
+    return {"employees": safe, "total": len(safe), "exported_at": datetime.now().isoformat()}
+
+# ─────────────────────────────────────────────
 # Static frontend
 # ─────────────────────────────────────────────
 
