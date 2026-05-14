@@ -739,6 +739,47 @@ async def get_attendance_history(start_date: Optional[str] = None, end_date: Opt
     records.sort(key=lambda r: (r.get("date", ""), r.get("timestamp", "")))
     return {"records": records, "total": len(records)}
 
+@app.delete("/api/attendance/clear")
+async def clear_attendance(
+    date: Optional[str] = None,
+    employee_id: Optional[str] = None
+):
+    """
+    Delete attendance records from Firestore.
+    - No params       -> delete ALL records
+    - date=YYYY-MM-DD -> delete all records for that date
+    - employee_id=X   -> delete records for that employee
+    - both            -> delete records matching both filters
+    """
+    try:
+        query = ATTENDANCE_COL
+        if employee_id:
+            query = query.where("employee_id", "==", employee_id)
+        if date:
+            query = query.where("date", "==", date)
+
+        docs = list(query.stream())
+        deleted = 0
+        BATCH_SIZE = 400
+        for i in range(0, len(docs), BATCH_SIZE):
+            batch = db_fs.batch()
+            for doc in docs[i:i + BATCH_SIZE]:
+                batch.delete(doc.reference)
+            batch.commit()
+            deleted += len(docs[i:i + BATCH_SIZE])
+
+        scope_parts = []
+        if date:        scope_parts.append(f"date={date}")
+        if employee_id: scope_parts.append(f"employee={employee_id}")
+        scope_str = ", ".join(scope_parts) if scope_parts else "ALL records"
+
+        logger.info(f"Cleared {deleted} attendance records ({scope_str})")
+        return {"success": True, "deleted": deleted, "scope": scope_str}
+
+    except Exception as e:
+        logger.error(f"Clear attendance error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/dashboard/stats")
 async def get_dashboard_stats():
     try:

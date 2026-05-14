@@ -255,15 +255,29 @@ function captureFrame(videoId, canvasId) {
 
 /* Auth */
 
+function toggleAdminLogin() {
+  const panel = document.getElementById('admin-login-panel');
+  const arrow = document.getElementById('admin-toggle-arrow');
+  if (!panel) return;
+  const isOpen = panel.classList.toggle('open');
+  if (arrow) arrow.style.transform = isOpen ? 'rotate(180deg)' : '';
+  // Focus username field when opening
+  if (isOpen) setTimeout(() => { const u = document.getElementById('login-username'); if (u) u.focus(); }, 350);
+}
+
 async function doLogin() {
 
-  const u = document.getElementById('login-username').value;
+  const u = document.getElementById('login-username').value.trim();
 
   const p = document.getElementById('login-password').value;
 
+  if (!u || !p) { showError('login-error', 'Please enter username and password.'); return; }
+
   const btn = document.getElementById('login-btn');
 
-  btn.textContent = 'Authenticating...';
+  const btnText = document.getElementById('login-btn-text');
+
+  if (btnText) btnText.textContent = 'Authenticating...';
 
   btn.disabled = true;
 
@@ -282,19 +296,19 @@ async function doLogin() {
 
       } else {
 
-        // Admin / Manager  full dashboard
-
+        // Admin / Manager → full dashboard
         document.getElementById('sidebar-user-name').textContent = d.name;
 
         showScreen('dashboard-screen');
 
       }
 
-    } else { showError('login-error', 'Invalid credentials'); }
+    } else { showError('login-error', 'Invalid username or password.'); }
 
   } catch { showError('login-error', 'Cannot connect to server. Is the backend running?'); }
 
-  btn.textContent = 'Access System'; btn.disabled = false;
+  if (btnText) btnText.textContent = 'Access System';
+  btn.disabled = false;
 
 }
 
@@ -582,11 +596,23 @@ function switchTab(el) {
 
   if (el.dataset.tab === 'tab-attendance') loadAttendance();
 
+  // Auto-close sidebar on mobile after tab selection
+  const sidebar = document.getElementById('sidebar');
+  if (sidebar && sidebar.classList.contains('open')) {
+    sidebar.classList.remove('open');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (overlay) overlay.classList.remove('show');
+  }
+
 }
 
 
 
-function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (overlay) overlay.classList.toggle('show');
+}
 
 
 
@@ -1594,6 +1620,89 @@ function closeEditModal() {
 
 }
 
+
+
+/* ── Clear Attendance Modal ── */
+
+function openClearModal() {
+  const modal = document.getElementById('clear-att-modal');
+  if (!modal) return;
+  // Set today's date as default
+  const today = new Date().toISOString().split('T')[0];
+  const dateInput = document.getElementById('clear-date-input');
+  if (dateInput) dateInput.value = today;
+  // Reset scope
+  const scope = document.getElementById('clear-scope');
+  if (scope) scope.value = 'date';
+  onClearScopeChange();
+  modal.classList.remove('hidden');
+  document.body.classList.add('modal-open');
+}
+
+function closeClearModal() {
+  const modal = document.getElementById('clear-att-modal');
+  if (modal) modal.classList.add('hidden');
+  document.body.classList.remove('modal-open');
+}
+
+function handleClearModalBackdrop(e) {
+  if (e.target === document.getElementById('clear-att-modal')) closeClearModal();
+}
+
+function onClearScopeChange() {
+  const scope = document.getElementById('clear-scope').value;
+  const dateWrap = document.getElementById('clear-date-wrap');
+  const warning = document.getElementById('clear-warning');
+  const confirmBtn = document.getElementById('clear-confirm-btn');
+  if (scope === 'all') {
+    if (dateWrap) dateWrap.style.display = 'none';
+    if (warning) warning.style.display = 'block';
+    if (confirmBtn) confirmBtn.textContent = '🗑 Delete ALL Records';
+  } else {
+    if (dateWrap) dateWrap.style.display = '';
+    if (warning) warning.style.display = 'none';
+    if (confirmBtn) confirmBtn.textContent = '🗑 Confirm & Delete';
+  }
+}
+
+async function confirmClearAttendance() {
+  const scope = document.getElementById('clear-scope').value;
+  const date  = document.getElementById('clear-date-input')?.value;
+  const btn   = document.getElementById('clear-confirm-btn');
+
+  if (scope === 'date' && !date) { toast('Please select a date to clear', 'error'); return; }
+
+  // Extra safety confirmation for nuke-all
+  if (scope === 'all') {
+    const confirmed = confirm('⚠️ Are you absolutely sure?\n\nThis will PERMANENTLY DELETE every attendance record across ALL employees and ALL dates from Firebase.\n\nType OK to confirm.');
+    if (!confirmed) return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Deleting...';
+
+  try {
+    let url = `${API}/attendance/clear`;
+    if (scope === 'date' && date) url += `?date=${date}`;
+
+    const r = await fetch(url, { method: 'DELETE' });
+    const d = await r.json();
+
+    if (d.success) {
+      toast(`✅ Deleted ${d.deleted} record${d.deleted !== 1 ? 's' : ''} (${d.scope})`, 'success');
+      closeClearModal();
+      loadAttendance();        // refresh the table
+      loadDashboard();         // refresh stats
+    } else {
+      toast('Error: ' + (d.detail || 'Unknown error'), 'error');
+    }
+  } catch (e) {
+    toast('Server error: ' + e.message, 'error');
+  }
+
+  btn.disabled = false;
+  onClearScopeChange(); // restore button text
+}
 
 
 async function saveEmployee(e) {

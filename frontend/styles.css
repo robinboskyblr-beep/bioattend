@@ -36,7 +36,53 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
 /* ── LOGIN ── */
 #login-screen{align-items:center;justify-content:center;padding:20px}
-.login-container{width:100%;max-width:480px;display:flex;flex-direction:column;gap:20px}
+.login-container{width:100%;max-width:480px;display:flex;flex-direction:column;gap:16px}
+
+/* Role Tabs */
+.role-tabs{display:flex;gap:6px;margin-bottom:4px}
+.role-tab{flex:1;padding:9px 10px;background:var(--glass);border:1px solid var(--glass-border);border-radius:9px;color:var(--text2);font-family:inherit;font-size:.85rem;font-weight:600;cursor:pointer;transition:.2s;text-align:center;white-space:nowrap}
+.role-tab:hover{border-color:var(--blue);color:var(--blue)}
+.role-tab.active{background:rgba(14,165,233,0.15);border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 12px rgba(0,212,255,0.15)}
+.role-hint{font-size:.78rem;color:var(--text2);padding:6px 10px;background:var(--glass);border-radius:8px;border:1px solid var(--glass-border);text-align:center}
+
+/* ── Employee Scan Entry Button ── */
+.emp-scan-entry-btn{
+  position:relative;overflow:hidden;
+  width:100%;padding:22px 24px;
+  background:linear-gradient(135deg,var(--cyan),var(--blue2));
+  border:none;border-radius:16px;
+  display:flex;align-items:center;gap:16px;
+  cursor:pointer;transition:.25s;
+  box-shadow:0 0 40px rgba(0,212,255,0.35),0 4px 20px rgba(0,0,0,0.3);
+  animation:pulse-btn 2.5s ease-in-out infinite;
+}
+.emp-scan-entry-btn:hover{transform:translateY(-2px);box-shadow:0 0 60px rgba(0,212,255,0.55),0 8px 30px rgba(0,0,0,0.4)}
+.emp-scan-entry-btn:active{transform:translateY(0)}
+.eseb-icon{font-size:2.2rem;color:#000;line-height:1;flex-shrink:0}
+.eseb-text{text-align:left}
+.eseb-title{font-size:1.2rem;font-weight:900;color:#000;letter-spacing:.02em}
+.eseb-sub{font-size:.75rem;color:rgba(0,0,0,.6);margin-top:3px;font-weight:500}
+
+/* ── Admin/Manager collapsible login ── */
+.admin-login-collapse{display:flex;flex-direction:column;gap:0}
+.admin-toggle-btn{
+  width:100%;padding:11px 16px;
+  background:var(--glass);border:1px solid var(--glass-border);
+  border-radius:10px;color:var(--text2);
+  font-family:inherit;font-size:.83rem;font-weight:600;
+  cursor:pointer;transition:.2s;
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+}
+.admin-toggle-btn:hover{border-color:var(--blue);color:var(--blue)}
+.admin-toggle-arrow{font-size:.7rem;transition:transform .25s;display:inline-block}
+.admin-login-panel{
+  max-height:0;overflow:hidden;
+  transition:max-height .35s cubic-bezier(.4,0,.2,1),opacity .25s;
+  opacity:0;
+}
+.admin-login-panel.open{max-height:400px;opacity:1}
+.admin-login-panel .login-card{margin-top:8px;border-radius:12px;padding:22px 20px;gap:12px}
+
 .logo-wrap{display:flex;align-items:center;gap:16px;justify-content:center;margin-bottom:8px}
 .logo-ring{width:80px;height:80px;flex-shrink:0}
 .logo-svg{width:100%;height:100%;filter:drop-shadow(0 0 16px rgba(0,212,255,0.5))}
@@ -460,12 +506,15 @@ canvas{max-height:220px}
   .stats-grid{grid-template-columns:repeat(2,1fr)}
   .dashboard-grid,.register-container,.scan-admin-container{grid-template-columns:1fr}
   .scan-station-grid{grid-template-columns:1fr}
-  .reports-grid{grid-template-columns:1fr}
+  .reports-grid{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
   .sidebar{transform:translateX(-100%)}
   .sidebar.open{transform:translateX(0)}
   .main-content{margin-left:0}
   .menu-btn{display:block}
   .kiosk-body{flex-direction:column}
+  /* Attendance section actions */
+  .section-actions{flex-wrap:wrap;gap:8px}
+  .section-actions .form-input,.section-actions input[type=date]{flex:1;min-width:120px}
 }
 
 /* ── EMPLOYEE FACE SCAN SCREEN ── */
@@ -652,4 +701,265 @@ canvas{max-height:220px}
 @media(max-width:900px){
   .kiosk-main{grid-template-columns:1fr;padding:16px}
   .kiosk-topbar{padding:12px 16px}
+}
+
+/* ═══════════════════════════════════════════════════
+   MOBILE RESPONSIVE — Full system
+   ═══════════════════════════════════════════════════ */
+
+/* ── 900px breakpoint (tablet + small laptop) ── */
+@media(max-width:900px){
+
+  /* Dashboard sidebar */
+  .sidebar{transform:translateX(-100%);z-index:200}
+  .sidebar.open{transform:translateX(0);box-shadow:0 0 60px rgba(0,0,0,0.8)}
+  .main-content{margin-left:0!important}
+  .menu-btn{display:flex!important;align-items:center;justify-content:center}
+
+  /* Sidebar overlay backdrop */
+  .sidebar-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:199;display:none}
+  .sidebar-backdrop.show{display:block}
+
+  /* Stats grid → 2 columns */
+  .stats-grid{grid-template-columns:repeat(2,1fr);gap:12px}
+
+  /* Dashboard/Register/Scan → single column */
+  .dashboard-grid,
+  .register-container,
+  .scan-admin-container,
+  .scan-station-grid{grid-template-columns:1fr}
+
+  /* Reports → 1 column */
+  .reports-grid{grid-template-columns:1fr}
+
+  /* Kiosk screen */
+  .kiosk-main{grid-template-columns:1fr;padding:14px 16px;gap:14px}
+  .kiosk-topbar{padding:10px 14px;gap:8px}
+  .kiosk-brand-tag{display:none}
+  .kiosk-time{font-size:1.2rem}
+
+  /* Employee kiosk body */
+  .emp-kiosk-body{grid-template-columns:1fr}
+  .emp-kiosk-header{flex-wrap:wrap;gap:10px;padding:12px 14px}
+  .emp-kiosk-time{font-size:1.1rem}
+
+  /* Form rows → stacked */
+  .form-row{grid-template-columns:1fr}
+
+  /* Tables → scrollable */
+  .table-wrap,.payroll-output{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .att-table,.payroll-table,.report-output table{min-width:600px}
+
+  /* Calendar */
+  .cal-day{min-height:52px;padding:5px 3px}
+  .cal-day-num{font-size:.78rem}
+  .cal-day-count{display:none}
+}
+
+/* ── 640px breakpoint (mobile landscape + large phones) ── */
+@media(max-width:640px){
+
+  /* Login page */
+  .login-container{max-width:100%;padding:0 4px}
+  .login-card{padding:20px 16px}
+  .logo-wrap{gap:10px}
+  .rb-logo-wrap{width:64px;height:64px}
+  .rb-logo-img{width:58px;height:58px}
+  .brand-name{font-size:1.5rem}
+  .role-tabs{gap:4px}
+  .role-tab{padding:7px 12px;font-size:.8rem}
+
+  /* Topbar */
+  .topbar{padding:12px 14px}
+  .topbar-time{display:none}
+
+  /* Stats → 2 cols compact */
+  .stats-grid{grid-template-columns:repeat(2,1fr);gap:10px}
+  .stat-card{padding:14px;gap:10px}
+  .stat-icon{width:40px;height:40px;font-size:1.3rem}
+  .stat-value{font-size:1.4rem}
+
+  /* Tab content padding */
+  .tab-content{padding:16px 12px}
+
+  /* Employee cards → full width */
+  .employees-grid{grid-template-columns:1fr}
+  .emp-card{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px;padding:14px}
+  .emp-avatar{width:44px;height:44px;font-size:1.1rem;margin:0;flex-shrink:0}
+  .emp-name,.emp-id,.emp-dept,.emp-role{text-align:left}
+  .emp-actions{flex-wrap:wrap;justify-content:flex-start;gap:6px;width:100%}
+  .emp-actions button,.btn-edit,.btn-danger{font-size:.72rem!important;padding:5px 10px!important}
+
+  /* Kiosk screen compact */
+  .kiosk-topbar{padding:8px 12px}
+  .kiosk-back-btn{padding:6px 12px;font-size:.78rem}
+  .kiosk-brand-name{font-size:1rem}
+  .kiosk-time{font-size:1rem}
+  .kiosk-date{font-size:.65rem}
+  .kiosk-main{padding:10px 12px;gap:10px}
+  .kiosk-cam-card,.kiosk-today-card,.kiosk-instructions-card{padding:14px}
+  .btn-kiosk-scan{padding:13px 16px;font-size:.9rem}
+  .kiosk-popup-card{padding:28px 20px 22px;gap:10px}
+  .kiosk-popup-name{font-size:1.5rem}
+  .kiosk-popup-time{font-size:1.2rem}
+  .kiosk-popup-avatar{width:64px;height:64px;font-size:1.7rem}
+
+  /* Section header → stacked */
+  .section-header{flex-direction:column;align-items:flex-start;gap:10px}
+  .section-actions{width:100%}
+  .search-input{width:100%;min-width:0}
+
+  /* Manual attendance form */
+  .manual-form{flex-direction:column;gap:8px}
+  .manual-form .form-input{width:100%}
+
+  /* Payroll filters */
+  .payroll-filters{flex-direction:column;gap:8px}
+  .payroll-filters .form-input{width:100%}
+  .payroll-section-header{flex-direction:column;gap:10px}
+
+  /* Modals */
+  .modal-card{padding:20px 16px;border-radius:14px}
+  .modal-footer{flex-direction:column}
+  .modal-footer button{width:100%}
+
+  /* Calendar compact */
+  .cal-header{flex-direction:column;gap:10px}
+  .cal-nav{flex-wrap:wrap;gap:6px}
+  .cal-month-label{min-width:120px;font-size:.82rem}
+  .cal-legend{gap:10px}
+  .cal-day{min-height:44px;border-radius:7px;padding:4px 2px}
+  .cal-day-num{font-size:.72rem}
+  .cal-weekdays span{font-size:.62rem}
+
+  /* Toast — bottom center on mobile */
+  .toast{right:12px;left:12px;bottom:16px;text-align:center}
+
+  /* Employee kiosk header stacked */
+  .emp-kiosk-header{flex-direction:column;align-items:flex-start;gap:8px;padding:10px 12px}
+  .emp-kiosk-clock-wrap{text-align:left}
+  .emp-kiosk-time{font-size:1rem}
+  .emp-kiosk-wrap{padding:10px 12px;gap:14px}
+  .emp-today-row{flex-direction:column;align-items:flex-start;gap:4px}
+  .emp-today-val{font-size:.95rem}
+
+  /* Payroll summary bar */
+  .payroll-summary-bar{gap:12px}
+  .payroll-sum-item{min-width:100px}
+  .payroll-sum-value{font-size:1rem}
+}
+
+/* ── 480px breakpoint (small phones) ── */
+@media(max-width:480px){
+
+  /* Login */
+  #login-screen{padding:12px}
+  .login-card{padding:16px 12px;gap:12px}
+  .brand-name{font-size:1.25rem}
+  .brand-sub{font-size:.72rem}
+  .role-tab{padding:6px 10px;font-size:.75rem}
+  .btn-primary{padding:11px 16px;font-size:.85rem}
+
+  /* Stats → 1 column on tiny screens */
+  .stats-grid{grid-template-columns:1fr;gap:8px}
+  .stat-card{padding:12px;gap:8px}
+
+  /* Cards */
+  .glass-card{border-radius:10px}
+
+  /* Tab padding minimal */
+  .tab-content{padding:12px 8px}
+
+  /* Kiosk popup minimal */
+  .kiosk-popup-card{width:95vw;padding:22px 14px 18px}
+  .kiosk-popup-name{font-size:1.25rem}
+  .kiosk-popup-time{font-size:1rem}
+  .kiosk-popup-action{font-size:1rem}
+
+  /* Tables */
+  .att-table th,.att-table td,
+  .payroll-table th,.payroll-table td{padding:9px 10px;font-size:.78rem}
+
+  /* Reports grid → 1 col */
+  .reports-grid{grid-template-columns:1fr;gap:12px}
+  .report-card{padding:18px}
+
+  /* Section title */
+  .section-title{font-size:1rem}
+
+  /* Kiosk scan button full */
+  .kiosk-btn-row{flex-direction:column;gap:8px}
+  .btn-kiosk-auto{text-align:center}
+  .scan-btn-row{flex-direction:column;gap:8px}
+
+  /* Modal */
+  .modal-card{padding:16px 12px;max-height:95vh}
+
+  /* Kiosk topbar collapse */
+  .kiosk-topbar{flex-wrap:wrap}
+  .kiosk-clock-block{order:3;width:100%;text-align:left}
+  .kiosk-time{font-size:.9rem}
+
+  /* Settings cards */
+  [class*="glass-card"][style*="padding:28px"]{padding:16px!important}
+}
+
+/* ── Touch-friendly tap targets ── */
+@media(hover:none){
+  .nav-item{min-height:48px}
+  .btn-primary,.btn-secondary,.btn-danger,.btn-scan,.btn-kiosk-scan,.btn-scan-station{min-height:44px}
+  .form-input,select.form-input{min-height:44px;font-size:16px}/* prevents iOS zoom */
+  .role-tab{min-height:40px}
+}
+
+/* ── Sidebar hamburger overlay fix ── */
+.sidebar-overlay{
+  display:none;
+  position:fixed;inset:0;
+  background:rgba(0,0,0,.6);
+  z-index:199;
+  backdrop-filter:blur(2px);
+  cursor:pointer;
+}
+@media(max-width:900px){
+  .sidebar-overlay.show{display:block}
+}
+
+/* ── Settings cards full-width on mobile ── */
+@media(max-width:900px){
+  #tab-settings > div{max-width:100%!important}
+  .payroll-section-header{flex-direction:column;gap:10px}
+  .payroll-filters{flex-direction:column;gap:8px;width:100%}
+  .payroll-filters .form-input,.payroll-filters button{width:100%}
+}
+
+/* ── Attendance section actions on mobile ── */
+@media(max-width:640px){
+  #tab-attendance .section-actions{flex-direction:column;align-items:stretch;gap:8px}
+  #tab-attendance .section-actions input[type=date],
+  #tab-attendance .section-actions .btn-primary,
+  #tab-attendance .section-actions .btn-secondary{width:100%;flex:none}
+  /* Backup panel inline styles */
+  #tab-reports > div:last-child > div:first-child{flex-direction:column!important;align-items:flex-start!important}
+  #tab-reports > div:last-child > div:first-child > div:last-child{width:100%;flex-wrap:wrap}
+  #tab-reports > div:last-child > div:last-child > div:not(#backup-log){padding:14px!important}
+}
+
+/* ── 360px (very small phones e.g. Galaxy A series) ── */
+@media(max-width:360px){
+  .brand-name{font-size:1.1rem}
+  .brand-sub{font-size:.68rem}
+  .role-tab{padding:6px 6px;font-size:.72rem}
+  .stat-value{font-size:1.2rem}
+  .kiosk-popup-card{padding:18px 10px 14px}
+  .kiosk-popup-name{font-size:1.1rem}
+  .kiosk-popup-time{font-size:.95rem}
+  .kiosk-popup-avatar{width:54px;height:54px;font-size:1.4rem}
+  .topbar-title{font-size:.95rem}
+  .emp-kiosk-brand span:not(svg){font-size:.9rem}
+  .emp-kiosk-time{font-size:.9rem}
+  .kiosk-cam-card,.emp-cam-card,.kiosk-today-card,.kiosk-instructions-card{padding:10px}
+  .btn-kiosk-scan,.btn-scan-station{font-size:.82rem;padding:11px 12px}
+  /* Inline kiosk button */
+  #kiosk-entry-btn{padding:12px 16px!important;font-size:.88rem!important}
 }

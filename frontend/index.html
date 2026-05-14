@@ -20,6 +20,8 @@
     <!-- ══════════ LOGIN SCREEN ══════════ -->
     <div id="login-screen" class="screen active">
       <div class="login-container">
+
+        <!-- Logo -->
         <div class="logo-wrap">
           <div class="rb-logo-wrap">
             <img src="/robinboskylogo_cropped.jpg" alt="Robinbosky Logo" class="rb-logo-img" />
@@ -30,64 +32,51 @@
           </div>
         </div>
 
-        <div class="login-card glass-card">
-          <!-- Role Tabs -->
-          <div class="role-tabs">
-            <button class="role-tab active" id="tab-admin-btn" onclick="selectRole('admin')">🛡 Admin</button>
-            <button class="role-tab" id="tab-manager-btn" onclick="selectRole('manager')">📋 Manager</button>
-            <button class="role-tab" id="tab-employee-btn" onclick="selectRole('employee')">👤 Employee</button>
+        <!-- ── Employee Scan Button (primary, no login) ── -->
+        <button id="emp-scan-entry-btn" class="emp-scan-entry-btn" onclick="enterEmployeeKiosk()">
+          <span class="btn-glow"></span>
+          <span class="eseb-icon">◉</span>
+          <div class="eseb-text">
+            <div class="eseb-title">Scan Attendance</div>
+            <div class="eseb-sub">Look at camera — face recognition, no login needed</div>
           </div>
+        </button>
 
-          <div id="role-hint" class="role-hint">
-            <span id="role-hint-text">Full system access</span>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" id="username-label">Username</label>
-            <div class="input-wrap">
-              <span class="input-icon">⬡</span>
-              <input type="text" id="login-username" class="form-input" placeholder="Enter username" />
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Password</label>
-            <div class="input-wrap">
-              <span class="input-icon">🔒</span>
-              <input type="password" id="login-password" class="form-input" placeholder="Enter password" />
-            </div>
-          </div>
-
-          <button id="login-btn" class="btn-primary" onclick="doLogin()">
-            <span class="btn-glow"></span>
-            <span id="login-btn-text">Access System</span>
+        <!-- ── Admin / Manager Login ── -->
+        <div class="admin-login-collapse">
+          <button class="admin-toggle-btn" id="admin-toggle-btn" onclick="toggleAdminLogin()">
+            🛡 Admin / Manager Login
+            <span class="admin-toggle-arrow" id="admin-toggle-arrow">▼</span>
           </button>
-          <p id="login-error" class="error-msg hidden"></p>
-        </div>
-
-        <!-- Employee Kiosk shortcut -->
-        <div style="margin-top:18px;text-align:center">
-          <div style="font-size:.78rem;color:rgba(255,255,255,.35);margin-bottom:10px;letter-spacing:.04em">── OR ──</div>
-          <button id="kiosk-entry-btn" onclick="enterEmployeeKiosk()" style="
-            width:100%;padding:16px 24px;
-            background:linear-gradient(135deg,rgba(0,212,255,.15),rgba(0,81,255,.12));
-            border:1.5px solid rgba(0,212,255,.35);
-            border-radius:14px;color:#00d4ff;
-            font-size:1rem;font-weight:700;
-            cursor:pointer;transition:all .3s;
-            display:flex;align-items:center;justify-content:center;gap:10px;
-            letter-spacing:.02em;
-          " onmouseover="this.style.background='linear-gradient(135deg,rgba(0,212,255,.28),rgba(0,81,255,.22))';"
-             onmouseout="this.style.background='linear-gradient(135deg,rgba(0,212,255,.15),rgba(0,81,255,.12))'">
-            <span style="font-size:1.4rem">🏢</span>
-            <div style="text-align:left">
-              <div>Employee Kiosk</div>
-              <div style="font-size:.72rem;color:rgba(0,212,255,.65);font-weight:400">Walk up &amp; scan face — no login needed</div>
+          <div class="admin-login-panel" id="admin-login-panel">
+            <div class="login-card glass-card">
+              <div class="form-group">
+                <label class="form-label" id="username-label">Username</label>
+                <div class="input-wrap">
+                  <span class="input-icon">⬡</span>
+                  <input type="text" id="login-username" class="form-input" placeholder="Enter admin username" />
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Password</label>
+                <div class="input-wrap">
+                  <span class="input-icon">🔒</span>
+                  <input type="password" id="login-password" class="form-input" placeholder="Enter password" />
+                </div>
+              </div>
+              <button id="login-btn" class="btn-primary" onclick="doLogin()">
+                <span class="btn-glow"></span>
+                <span id="login-btn-text">Access System</span>
+              </button>
+              <p id="login-error" class="error-msg hidden"></p>
             </div>
-          </button>
+          </div>
         </div>
 
       </div>
     </div>
+
+
 
     <!-- ══════════ KIOSK SCREEN ══════════ -->
     <div id="kiosk-screen" class="screen">
@@ -340,6 +329,8 @@
 
     <!-- ══════════ DASHBOARD (Admin) ══════════ -->
     <div id="dashboard-screen" class="screen">
+      <!-- Sidebar overlay for mobile -->
+      <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
       <!-- Sidebar -->
       <nav class="sidebar" id="sidebar">
         <div class="sidebar-logo">
@@ -597,8 +588,48 @@
               <input type="date" id="att-end" class="form-input" />
               <button class="btn-primary" onclick="filterAttendance()">Filter</button>
               <button class="btn-secondary" onclick="exportAttendance()">⬇ Export CSV</button>
+              <button class="btn-danger" id="clear-att-btn" onclick="openClearModal()">🗑 Clear Records</button>
             </div>
           </div>
+
+          <!-- Clear Attendance Confirmation Modal -->
+          <div id="clear-att-modal" class="modal-overlay hidden" onclick="handleClearModalBackdrop(event)">
+            <div class="modal-card glass-card" style="max-width:480px">
+              <div class="modal-header">
+                <div>
+                  <h3 class="modal-title">🗑 Clear Attendance Records</h3>
+                  <div class="modal-sub">This permanently deletes records from Firebase. This cannot be undone.</div>
+                </div>
+                <button class="modal-close-btn" onclick="closeClearModal()">✕</button>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:14px;padding:4px 0">
+                <!-- Scope selector -->
+                <div class="form-group">
+                  <label class="form-label">What to clear</label>
+                  <select id="clear-scope" class="form-input" onchange="onClearScopeChange()">
+                    <option value="date">All records for a specific date</option>
+                    <option value="all">⚠️ ALL attendance records (entire history)</option>
+                  </select>
+                </div>
+                <!-- Date picker (shown for "date" scope) -->
+                <div class="form-group" id="clear-date-wrap">
+                  <label class="form-label">Select Date</label>
+                  <input type="date" id="clear-date-input" class="form-input" />
+                </div>
+                <!-- Warning box -->
+                <div id="clear-warning" style="padding:12px 14px;background:rgba(244,63,94,0.08);border:1px solid rgba(244,63,94,0.3);border-radius:10px;font-size:.83rem;color:#f87171;display:none">
+                  ⚠️ This will delete <strong>ALL</strong> attendance records across all employees and all dates. Make sure you've exported a backup first!
+                </div>
+              </div>
+              <div class="modal-footer" style="border-top:1px solid rgba(244,63,94,0.2)">
+                <button id="clear-confirm-btn" class="btn-danger" style="flex:1;min-height:42px;font-size:.9rem" onclick="confirmClearAttendance()">
+                  🗑 Confirm & Delete
+                </button>
+                <button class="btn-secondary" onclick="closeClearModal()">Cancel</button>
+              </div>
+            </div>
+          </div>
+
 
           <!-- Manual Attendance -->
           <div class="glass-card manual-att-card">
