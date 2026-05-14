@@ -62,10 +62,29 @@
             <span id="login-btn-text">Access System</span>
           </button>
           <p id="login-error" class="error-msg hidden"></p>
-
-
         </div>
 
+        <!-- Employee Kiosk shortcut -->
+        <div style="margin-top:18px;text-align:center">
+          <div style="font-size:.78rem;color:rgba(255,255,255,.35);margin-bottom:10px;letter-spacing:.04em">── OR ──</div>
+          <button id="kiosk-entry-btn" onclick="enterEmployeeKiosk()" style="
+            width:100%;padding:16px 24px;
+            background:linear-gradient(135deg,rgba(0,212,255,.15),rgba(0,81,255,.12));
+            border:1.5px solid rgba(0,212,255,.35);
+            border-radius:14px;color:#00d4ff;
+            font-size:1rem;font-weight:700;
+            cursor:pointer;transition:all .3s;
+            display:flex;align-items:center;justify-content:center;gap:10px;
+            letter-spacing:.02em;
+          " onmouseover="this.style.background='linear-gradient(135deg,rgba(0,212,255,.28),rgba(0,81,255,.22))';"
+             onmouseout="this.style.background='linear-gradient(135deg,rgba(0,212,255,.15),rgba(0,81,255,.12))'">
+            <span style="font-size:1.4rem">🏢</span>
+            <div style="text-align:left">
+              <div>Employee Kiosk</div>
+              <div style="font-size:.72rem;color:rgba(0,212,255,.65);font-weight:400">Walk up &amp; scan face — no login needed</div>
+            </div>
+          </button>
+        </div>
 
       </div>
     </div>
@@ -185,12 +204,19 @@
       <!-- ══ RESULT POPUP OVERLAY ══ -->
       <div id="kiosk-popup" class="kiosk-popup hidden">
         <div class="kiosk-popup-card" id="kiosk-popup-card">
+          <!-- Company welcome header -->
+          <div id="kiosk-welcome-header" style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:10px;opacity:.85">
+            <img src="/robinboskylogo_cropped.jpg" style="width:28px;height:28px;border-radius:6px;object-fit:contain;background:#fff;padding:1px" alt="logo">
+            <span style="font-size:.9rem;font-weight:700;letter-spacing:.06em;color:#fff">Welcome to Robinbosky</span>
+          </div>
           <div class="kiosk-popup-avatar" id="kiosk-popup-avatar">?</div>
           <div class="kiosk-popup-greeting" id="kiosk-popup-greeting">Welcome!</div>
           <div class="kiosk-popup-name" id="kiosk-popup-name"></div>
           <div class="kiosk-popup-action" id="kiosk-popup-action"></div>
           <div class="kiosk-popup-time" id="kiosk-popup-time"></div>
           <div class="kiosk-popup-conf" id="kiosk-popup-conf"></div>
+          <!-- Today's punches mini summary -->
+          <div id="kiosk-popup-punches" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin-top:14px;font-size:.78rem;color:rgba(255,255,255,.7)"></div>
           <div class="kiosk-popup-bar">
             <div class="kiosk-popup-progress" id="kiosk-popup-progress"></div>
           </div>
@@ -198,6 +224,7 @@
       </div>
 
     </div>
+
 
     <!-- ══════════ EMPLOYEE FACE SCAN SCREEN ══════════ -->
     <div id="employee-screen" class="screen">
