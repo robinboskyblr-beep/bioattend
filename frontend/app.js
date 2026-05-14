@@ -2746,7 +2746,45 @@ async function loadBackupEmail() {
   } catch(e) { /* silent */ }
 }
 
+async function downloadBackupCsv(e) {
+  if (e) e.preventDefault();
+  const btn  = document.getElementById('download-csv-btn');
+  const text = document.getElementById('download-csv-text');
+  if (text) text.textContent = '⏳ Preparing CSV…';
+  if (btn)  btn.style.opacity = '0.7';
+
+  try {
+    const r = await fetch(`${API}/backup/download`);
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      toast('❌ Download failed: ' + (d.detail || r.statusText), 'error');
+      return;
+    }
+    // Get filename from Content-Disposition header
+    const disposition = r.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : `bioattend_backup_${new Date().toISOString().slice(0,10)}.csv`;
+
+    const blob = await r.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast(`✅ Downloaded: ${filename}`, 'success');
+  } catch(err) {
+    toast('❌ Download error: ' + err.message, 'error');
+  } finally {
+    if (text) text.textContent = 'Download Full Backup CSV';
+    if (btn)  btn.style.opacity = '1';
+  }
+}
+
 async function saveSmtpSettings() {
+
   const resendKey = document.getElementById('resend-key-input')?.value.trim();
   const smtpUser  = document.getElementById('smtp-user-input')?.value.trim();
   const smtpPass  = document.getElementById('smtp-pass-input')?.value.trim();

@@ -1141,8 +1141,60 @@ async def get_backup_email():
         return {"email": doc.to_dict().get("email", "")}
     return {"email": ""}
 
+# ─────────────────────────────────────────────
+# Direct CSV Download (no email needed)
+# ─────────────────────────────────────────────
+from fastapi.responses import StreamingResponse
+
+@app.get("/api/backup/download")
+async def download_backup_csv():
+    """
+    Stream the full attendance + employee CSV directly to the browser.
+    No SMTP, no third-party — just a direct download. Works everywhere.
+    """
+    IST      = timezone(timedelta(hours=5, minutes=30))
+    today    = datetime.now(IST).strftime("%Y-%m-%d")
+    now_str  = datetime.now(IST).strftime("%Y-%m-%d_%H-%M")
+
+    all_emps  = get_all_employees()
+    emp_map   = {e["id"]: e for e in all_emps}
+    all_recs  = list(ATTENDANCE_COL.stream())
+    records   = [r.to_dict() for r in all_recs]
+    records.sort(key=lambda r: (r.get("date", ""), r.get("name", "")))
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Date", "Employee Name", "Employee ID", "Department",
+        "Clock In (AM)", "Clock Out (Lunch)", "Clock In (PM)", "Clock Out (Day)",
+        "Status", "Punches", "Confidence %"
+    ])
+    for rec in records:
+        emp  = emp_map.get(rec.get("employee_id", ""), {})
+        dept = emp.get("department", rec.get("department", ""))
+        p1   = rec.get("check_in")    or ""
+        p2   = rec.get("check_out")   or ""
+        p3   = rec.get("check_in_2")  or ""
+        p4   = rec.get("check_out_2") or ""
+        punches = sum(1 for v in [p1, p2, p3, p4] if v)
+        writer.writerow([
+            rec.get("date", ""), rec.get("name", ""), rec.get("employee_id", ""),
+            dept, p1, p2, p3, p4,
+            rec.get("status", ""), f"{punches}/4", rec.get("confidence", ""),
+        ])
+
+    csv_bytes = output.getvalue().encode("utf-8")
+    filename  = f"bioattend_backup_{now_str}.csv"
+
+    return StreamingResponse(
+        iter([csv_bytes]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
 @app.post("/api/backup/send-email")
 async def send_backup_email(req: BackupEmailRequest):
+
     """
     Collect all attendance records + employee info and email a CSV to the
     configured (or override) recipient using Gmail SMTP credentials stored

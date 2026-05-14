@@ -868,17 +868,28 @@
               <p id="mgr-status" class="reg-status hidden" style="margin-top:10px"></p>
             </div>
 
-            <!-- ══ Email Backup ══ -->
+            <!-- ══ Backup ══ -->
             <div class="glass-card" style="padding:28px;border:1.5px solid rgba(0,212,255,.2)">
-              <h3 class="card-title" style="margin-bottom:6px">📧 Email Backup</h3>
-              <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:20px">
-                Send a complete CSV backup of all attendance records (every clock-in & clock-out) to an email address. Uses Gmail SMTP configured on the server.
+              <h3 class="card-title" style="margin-bottom:6px">📦 Attendance Backup</h3>
+              <p style="font-size:.82rem;color:var(--text2);margin-bottom:20px">
+                Download a complete CSV of all attendance records — every clock-in & clock-out for all employees.
               </p>
 
-              <!-- Recipient Email -->
+              <!-- ✅ PRIMARY: Direct Download (always works) -->
+              <div style="background:linear-gradient(135deg,rgba(14,165,233,0.12),rgba(59,130,246,0.08));border:1.5px solid rgba(14,165,233,0.4);border-radius:12px;padding:16px;margin-bottom:16px">
+                <div style="font-size:.85rem;font-weight:700;color:var(--cyan);margin-bottom:6px">✅ Download CSV — Works Instantly (No Email Needed)</div>
+                <p style="font-size:.76rem;color:var(--text2);margin-bottom:12px">Downloads the full backup directly to your device. No SMTP, no API — always works.</p>
+                <a id="download-csv-btn" href="#" onclick="downloadBackupCsv(event)"
+                   style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:52px;background:linear-gradient(135deg,var(--blue2),var(--blue-dark));color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;text-decoration:none;animation:btn-blue-pulse 3s ease-in-out infinite">
+                  <span style="font-size:1.3rem">⬇️</span>
+                  <span id="download-csv-text">Download Full Backup CSV</span>
+                </a>
+              </div>
+
+              <!-- Recipient Email (for email option) -->
               <div class="form-row" style="margin-bottom:14px">
                 <div class="form-group" style="flex:1">
-                  <label class="form-label">📨 Backup Recipient Email</label>
+                  <label class="form-label">📨 Backup Recipient Email (optional)</label>
                   <div class="input-wrap">
                     <span class="input-icon">@</span>
                     <input type="email" id="backup-email-input" class="form-input" placeholder="e.g. admin@company.com" />
@@ -892,14 +903,14 @@
               </div>
               <p id="backup-email-status" class="reg-status hidden" style="margin-top:0;margin-bottom:14px"></p>
 
-              <!-- Send Backup -->
-              <button id="send-backup-btn" class="btn-primary" onclick="sendEmailBackup()" style="width:100%;min-height:50px;font-size:1rem;letter-spacing:.02em">
-                <span class="btn-glow"></span>
-                <span id="send-backup-text">📤 Send Full Backup Now</span>
+              <!-- Send via Email (secondary) -->
+              <button id="send-backup-btn" class="btn-secondary" onclick="sendEmailBackup()" style="width:100%;min-height:44px;font-size:.9rem">
+                <span id="send-backup-text">📤 Send Backup via Email</span>
               </button>
               <!-- Test Email -->
-              <button id="test-email-btn" class="btn-secondary" onclick="sendTestEmail()" style="width:100%;min-height:40px;margin-top:8px;font-size:.85rem">
+              <button id="test-email-btn" class="btn-secondary" onclick="sendTestEmail()" style="width:100%;min-height:36px;margin-top:6px;font-size:.8rem;opacity:.75">
                 <span id="test-email-text">🔍 Send Test Email (diagnose issues)</span>
+
               </button>
               <p id="send-backup-status" class="reg-status hidden" style="margin-top:12px"></p>
 
