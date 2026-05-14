@@ -463,33 +463,37 @@ async function loadEmpTodayAttendance() {
 
     const d = await r.json();
 
-    const badge = document.getElementById('emp-today-status-badge');
+    const badge  = document.getElementById('emp-today-status-badge');
+    const cin    = document.getElementById('emp-checkin-val');
+    const cout   = document.getElementById('emp-checkout-val');
+    const cin2   = document.getElementById('emp-checkin2-val');
+    const cout2  = document.getElementById('emp-checkout2-val');
 
-    const cin = document.getElementById('emp-checkin-val');
-
-    const cout = document.getElementById('emp-checkout-val');
+    const fmt = v => v ? `<span style="color:var(--cyan);font-weight:600">${v}</span>` : '<span style="opacity:.35">—</span>';
 
     if (d.today) {
 
       const rec = d.today;
 
-      if (cin) cin.textContent = rec.check_in || '';
-
-      if (cout) cout.textContent = rec.check_out || '';
+      if (cin)   cin.innerHTML   = fmt(rec.check_in);
+      if (cout)  cout.innerHTML  = fmt(rec.check_out);
+      if (cin2)  cin2.innerHTML  = fmt(rec.check_in_2);
+      if (cout2) cout2.innerHTML = fmt(rec.check_out_2);
 
       if (badge) {
-
-        badge.textContent = rec.check_out ? 'Complete' : 'In';
-
-        badge.className = 'log-entry-badge ' + (rec.check_out ? 'out' : 'in');
-
+        if (rec.check_out_2)      { badge.textContent = 'Complete ✅'; badge.className = 'log-entry-badge out'; }
+        else if (rec.check_in_2)  { badge.textContent = 'Afternoon In'; badge.className = 'log-entry-badge in'; }
+        else if (rec.check_out)   { badge.textContent = 'Lunch Break'; badge.className = 'log-entry-badge'; }
+        else if (rec.check_in)    { badge.textContent = 'Morning In'; badge.className = 'log-entry-badge in'; }
+        else                      { badge.textContent = 'Not yet'; badge.className = 'log-entry-badge'; }
       }
 
     } else {
 
-      if (cin) cin.textContent = '';
-
-      if (cout) cout.textContent = '';
+      if (cin)   cin.innerHTML   = fmt(null);
+      if (cout)  cout.innerHTML  = fmt(null);
+      if (cin2)  cin2.innerHTML  = fmt(null);
+      if (cout2) cout2.innerHTML = fmt(null);
 
       if (badge) { badge.textContent = 'Not yet'; badge.className = 'log-entry-badge'; }
 
@@ -498,6 +502,7 @@ async function loadEmpTodayAttendance() {
   } catch (e) { console.error('loadEmpTodayAttendance:', e); }
 
 }
+
 
 
 

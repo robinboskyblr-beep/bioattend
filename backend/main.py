@@ -8,7 +8,7 @@ import shutil
 import logging
 import hashlib
 import numpy as np
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional, List
 from pathlib import Path
 
@@ -237,7 +237,7 @@ class RegisterRequest(BaseModel):
     email: str
     phone: str
     shift_start: str = "09:00"
-    shift_end: str = "18:00"
+    shift_end: str = "19:00"
     lunch_break_start: str = "13:00"
     lunch_break_end: str = "14:00"
     password: str = "emp123"
@@ -350,7 +350,7 @@ async def get_my_attendance(employee_id: str, start_date: Optional[str] = None, 
         raise HTTPException(status_code=404, detail="Employee not found")
     records = get_attendance_by_filters(start_date=start_date, end_date=end_date, employee_id=employee_id)
     records.sort(key=lambda r: r.get("date", ""))
-    today = date.today().strftime("%Y-%m-%d")
+    today = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d")
     today_rec = [r for r in records if r["date"] == today]
     return {
         "employee_id": employee_id,
@@ -478,7 +478,8 @@ async def scan_face(req: ScanRequest):
         if len(faces) == 0:
             return {"success": False, "message": "No face detected. Please position your face in the camera.", "detected": False}
 
-        now   = datetime.now()
+        IST = timezone(timedelta(hours=5, minutes=30))
+        now   = datetime.now(IST)
         today = now.strftime("%Y-%m-%d")
         t     = now.strftime("%H:%M:%S")
 
@@ -549,7 +550,8 @@ async def manual_attendance(req: ManualAttendanceRequest):
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
 
-    now = datetime.now()
+    IST = timezone(timedelta(hours=5, minutes=30))
+    now = datetime.now(IST)
     target_date = req.date or now.strftime("%Y-%m-%d")
     today_recs = get_employee_today_records(req.employee_id, target_date)
     today_recs.sort(key=lambda r: r.get("timestamp", ""))
@@ -583,7 +585,8 @@ async def manual_attendance(req: ManualAttendanceRequest):
 
 @app.get("/api/attendance/today")
 async def get_today_attendance():
-    today = date.today().strftime("%Y-%m-%d")
+    IST = timezone(timedelta(hours=5, minutes=30))
+    today = datetime.now(IST).strftime("%Y-%m-%d")
     records = get_today_records(today)
     records.sort(key=lambda r: r.get("timestamp", ""))
     return {"date": today, "records": records, "total": len(records)}
@@ -597,7 +600,8 @@ async def get_attendance_history(start_date: Optional[str] = None, end_date: Opt
 @app.get("/api/dashboard/stats")
 async def get_dashboard_stats():
     all_emps  = get_all_employees()
-    today_str = date.today().strftime("%Y-%m-%d")
+    IST = timezone(timedelta(hours=5, minutes=30))
+    today_str = datetime.now(IST).strftime("%Y-%m-%d")
     today_recs = get_today_records(today_str)
 
     total_employees = len(all_emps)
@@ -694,7 +698,8 @@ async def calculate_payroll(
 async def backup_daily(target_date: Optional[str] = None):
     """Return full attendance records for a given date (default: today)."""
     if not target_date:
-        target_date = date.today().strftime("%Y-%m-%d")
+        IST = timezone(timedelta(hours=5, minutes=30))
+        target_date = datetime.now(IST).strftime("%Y-%m-%d")
     records = get_today_records(target_date)
     records.sort(key=lambda r: (r.get("employee_id", ""), r.get("timestamp", "")))
     all_emps = {e["id"]: e for e in get_all_employees()}
