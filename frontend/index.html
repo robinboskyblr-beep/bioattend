@@ -907,12 +907,27 @@
               <!-- SMTP Setup -->
               <div style="margin-top:16px;padding:16px;background:rgba(14,165,233,0.06);border:1px solid rgba(14,165,233,0.2);border-radius:12px">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-                  <span style="font-size:.85rem;font-weight:700;color:var(--cyan)">⚙️ Gmail SMTP Setup</span>
+                  <span style="font-size:.85rem;font-weight:700;color:var(--cyan)">⚙️ Email Setup</span>
                   <span id="smtp-configured-badge" style="font-size:.72rem;padding:3px 10px;border-radius:20px;background:rgba(244,63,94,0.15);color:#f43f5e;border:1px solid rgba(244,63,94,0.3)">● Not Configured</span>
                 </div>
-                <p style="font-size:.76rem;color:var(--text2);margin-bottom:12px">
-                  Enter your Gmail address and a <strong>Gmail App Password</strong> (not your login password). 
-                  <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--cyan);text-decoration:none">Get App Password →</a>
+
+                <!-- Resend (recommended) -->
+                <div style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);border-radius:10px;padding:12px;margin-bottom:12px">
+                  <div style="font-size:.82rem;font-weight:700;color:var(--blue2);margin-bottom:4px">⚡ Recommended: Resend API (Free · Always works on cloud)</div>
+                  <p style="font-size:.74rem;color:var(--text2);margin-bottom:10px">
+                    SMTP is blocked on Render. Use <strong>Resend</strong> instead — free 100 emails/day, works instantly.
+                    <a href="https://resend.com" target="_blank" style="color:var(--cyan);text-decoration:none">Sign up at resend.com →</a>
+                  </p>
+                  <div class="input-wrap">
+                    <span class="input-icon">🔑</span>
+                    <input type="password" id="resend-key-input" class="form-input" placeholder="re_xxxxxxxxxxxxxxxxxxxx  (from resend.com dashboard)" />
+                  </div>
+                </div>
+
+                <!-- Gmail SMTP (fallback) -->
+                <p style="font-size:.76rem;color:var(--text2);margin-bottom:10px">
+                  <strong style="color:var(--text)">Or use Gmail SMTP</strong> (may be blocked by cloud servers)
+                  — <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--cyan);text-decoration:none">Get Gmail App Password →</a>
                 </p>
                 <div class="form-row" style="margin-bottom:10px">
                   <div class="form-group">
@@ -931,7 +946,7 @@
                   </div>
                 </div>
                 <button class="btn-secondary" onclick="saveSmtpSettings()" style="width:100%;min-height:42px">
-                  💾 Save SMTP Credentials
+                  💾 Save Email Settings
                 </button>
                 <p id="smtp-save-status" class="reg-status hidden" style="margin-top:10px;font-size:.8rem"></p>
                 <div style="margin-top:12px;font-size:.73rem;color:var(--text2);padding:8px;background:rgba(0,0,0,0.2);border-radius:8px">
@@ -939,6 +954,7 @@
                 </div>
               </div>
             </div>
+
 
 
 

@@ -11,6 +11,8 @@ import logging
 import hashlib
 import smtplib
 import asyncio
+import urllib.request
+import urllib.error
 import numpy as np
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -1053,35 +1055,76 @@ SETTINGS_COL = db_fs.collection("settings")
 class BackupEmailRequest(BaseModel):
     recipient: Optional[str] = None
 
+# ── Resend API helper (HTTPS — works on all cloud providers) ──
+def _send_via_resend(api_key: str, to_email: str, subject: str, body: str,
+                     csv_bytes: bytes = None, csv_filename: str = None) -> dict:
+    """
+    Send email via Resend HTTP API (https://resend.com).
+    Uses HTTPS port 443 — never blocked by cloud providers.
+    """
+    payload = {
+        "from": "BioAttend Backup <onboarding@resend.dev>",
+        "to": [to_email],
+        "subject": subject,
+        "text": body,
+    }
+    if csv_bytes and csv_filename:
+        payload["attachments"] = [{
+            "filename": csv_filename,
+            "content": base64.b64encode(csv_bytes).decode("utf-8")
+        }]
+
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=data,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read())
+
 class SmtpSettingsRequest(BaseModel):
-    smtp_user: str
-    smtp_pass: str
+    smtp_user: Optional[str] = None
+    smtp_pass: Optional[str] = None
     smtp_host: Optional[str] = "smtp.gmail.com"
     smtp_port: Optional[int] = 587
+    resend_api_key: Optional[str] = None
 
 @app.post("/api/settings/smtp")
 async def save_smtp_settings(req: SmtpSettingsRequest):
-    """Save SMTP credentials to Firestore (used when env vars are not set)."""
-    if not req.smtp_user or "@" not in req.smtp_user:
-        raise HTTPException(status_code=400, detail="Invalid Gmail address")
-    if not req.smtp_pass:
-        raise HTTPException(status_code=400, detail="App password cannot be empty")
-    SETTINGS_COL.document("smtp").set({
-        "smtp_user": req.smtp_user,
-        "smtp_pass": req.smtp_pass,
-        "smtp_host": req.smtp_host or "smtp.gmail.com",
-        "smtp_port": req.smtp_port or 587,
-    })
-    return {"success": True, "message": "SMTP settings saved"}
+    """Save email credentials to Firestore."""
+    data_to_save = {}
+    if req.resend_api_key:
+        data_to_save["resend_api_key"] = req.resend_api_key
+    if req.smtp_user:
+        if "@" not in req.smtp_user:
+            raise HTTPException(status_code=400, detail="Invalid Gmail address")
+        data_to_save["smtp_user"] = req.smtp_user
+    if req.smtp_pass:
+        data_to_save["smtp_pass"] = req.smtp_pass
+        data_to_save["smtp_host"] = req.smtp_host or "smtp.gmail.com"
+        data_to_save["smtp_port"] = req.smtp_port or 587
+    if not data_to_save:
+        raise HTTPException(status_code=400, detail="No credentials provided")
+    SETTINGS_COL.document("smtp").set(data_to_save, merge=True)
+    return {"success": True, "message": "Email settings saved"}
 
 @app.get("/api/settings/smtp")
 async def get_smtp_settings():
     doc = SETTINGS_COL.document("smtp").get()
     if doc.exists:
         d = doc.to_dict()
-        # Never return the password — just whether it's configured
-        return {"configured": True, "smtp_user": d.get("smtp_user", ""), "smtp_host": d.get("smtp_host", "smtp.gmail.com"), "smtp_port": d.get("smtp_port", 587)}
-    return {"configured": False, "smtp_user": "", "smtp_host": "smtp.gmail.com", "smtp_port": 587}
+        return {
+            "configured": True,
+            "smtp_user": d.get("smtp_user", ""),
+            "smtp_host": d.get("smtp_host", "smtp.gmail.com"),
+            "smtp_port": d.get("smtp_port", 587),
+            "resend_configured": bool(d.get("resend_api_key", "")),
+        }
+    return {"configured": False, "smtp_user": "", "smtp_host": "smtp.gmail.com", "smtp_port": 587, "resend_configured": False}
 
 @app.post("/api/settings/backup-email")
 async def save_backup_email(req: BackupEmailRequest):
@@ -1113,32 +1156,32 @@ async def send_backup_email(req: BackupEmailRequest):
     if not recipient or "@" not in recipient:
         raise HTTPException(status_code=400, detail="No backup email configured. Please save one in Settings first.")
 
-    # ── SMTP credentials: env vars first, then Firestore ──
-    smtp_user = os.environ.get("SMTP_USER", "")
-    smtp_pass = os.environ.get("SMTP_PASS", "")
-    smtp_host = os.environ.get("SMTP_HOST", "")
-    smtp_port_str = os.environ.get("SMTP_PORT", "")
+    # ── Load credentials from env vars then Firestore ──
+    resend_key  = os.environ.get("RESEND_API_KEY", "")
+    smtp_user   = os.environ.get("SMTP_USER", "")
+    smtp_pass   = os.environ.get("SMTP_PASS", "")
+    smtp_host   = os.environ.get("SMTP_HOST", "")
+    smtp_port_s = os.environ.get("SMTP_PORT", "")
 
-    if not smtp_user or not smtp_pass:
-        # Fall back to Firestore-stored credentials
-        smtp_doc = SETTINGS_COL.document("smtp").get()
-        if smtp_doc.exists:
-            sd = smtp_doc.to_dict()
-            smtp_user = smtp_user or sd.get("smtp_user", "")
-            smtp_pass = smtp_pass or sd.get("smtp_pass", "")
-            smtp_host = smtp_host or sd.get("smtp_host", "smtp.gmail.com")
-            smtp_port_str = smtp_port_str or str(sd.get("smtp_port", 587))
+    smtp_doc = SETTINGS_COL.document("smtp").get()
+    if smtp_doc.exists:
+        sd = smtp_doc.to_dict()
+        resend_key  = resend_key  or sd.get("resend_api_key", "")
+        smtp_user   = smtp_user   or sd.get("smtp_user", "")
+        smtp_pass   = smtp_pass   or sd.get("smtp_pass", "")
+        smtp_host   = smtp_host   or sd.get("smtp_host", "smtp.gmail.com")
+        smtp_port_s = smtp_port_s or str(sd.get("smtp_port", 587))
 
     smtp_host = smtp_host or "smtp.gmail.com"
-    smtp_port = int(smtp_port_str) if smtp_port_str else 587
+    smtp_port = int(smtp_port_s) if smtp_port_s else 587
 
-    if not smtp_user or not smtp_pass:
+    if not resend_key and not (smtp_user and smtp_pass):
         raise HTTPException(
             status_code=500,
-            detail="SMTP credentials not configured. Please add your Gmail address and App Password in Settings → Email Backup → SMTP Setup."
+            detail="No email method configured. Please add a Resend API key in Settings → Email Backup → SMTP Setup."
         )
 
-    IST = timezone(timedelta(hours=5, minutes=30))
+    IST     = timezone(timedelta(hours=5, minutes=30))
     now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
     today   = datetime.now(IST).strftime("%Y-%m-%d")
 
@@ -1149,7 +1192,7 @@ async def send_backup_email(req: BackupEmailRequest):
     records   = [r.to_dict() for r in all_recs]
     records.sort(key=lambda r: (r.get("date", ""), r.get("name", "")))
 
-    # ── Build CSV in memory ──
+    # ── Build CSV ──
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
@@ -1166,77 +1209,77 @@ async def send_backup_email(req: BackupEmailRequest):
         p4   = rec.get("check_out_2") or "—"
         punches = sum(1 for v in [p1, p2, p3, p4] if v != "—")
         writer.writerow([
-            rec.get("date", ""),
-            rec.get("name", ""),
-            rec.get("employee_id", ""),
-            dept,
-            p1, p2, p3, p4,
-            rec.get("status", ""),
-            f"{punches}/4",
-            rec.get("confidence", ""),
+            rec.get("date", ""), rec.get("name", ""), rec.get("employee_id", ""),
+            dept, p1, p2, p3, p4,
+            rec.get("status", ""), f"{punches}/4", rec.get("confidence", ""),
         ])
     csv_bytes = output.getvalue().encode("utf-8")
 
-    # ── Compose email ──
-    msg = MIMEMultipart()
-    msg["From"]    = smtp_user
-    msg["To"]      = recipient
-    msg["Subject"] = f"BioAttend Backup — {today} (generated {now_str} IST)"
-
-    body = (
-        f"Hi,\n\n"
-        f"Please find attached the full BioAttend attendance backup generated on {now_str} IST.\n\n"
+    subject = f"BioAttend Backup — {today} (generated {now_str} IST)"
+    body    = (
+        f"Hi,\n\nPlease find attached the full BioAttend attendance backup generated on {now_str} IST.\n\n"
         f"Summary:\n"
-        f"  • Total employees : {len(all_emps)}\n"
+        f"  • Total employees       : {len(all_emps)}\n"
         f"  • Total attendance records : {len(records)}\n\n"
         f"The CSV contains all clock-in and clock-out punches for every employee.\n\n"
         f"— Robinbosky BioAttend"
     )
-    msg.attach(MIMEText(body, "plain"))
+    csv_filename = f"bioattend_backup_{today}.csv"
 
+    # ── Send: Resend (HTTPS) first, SMTP fallback ──
+    if resend_key:
+        try:
+            await asyncio.to_thread(
+                _send_via_resend, resend_key, recipient, subject, body, csv_bytes, csv_filename
+            )
+            logger.info(f"Backup sent via Resend to {recipient} ({len(records)} records)")
+            return {"success": True, "message": f"Backup sent to {recipient}", "method": "resend",
+                    "records": len(records), "employees": len(all_emps)}
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode() if hasattr(e, 'read') else str(e)
+            raise HTTPException(status_code=500, detail=f"Resend API error: {err_body}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Resend failed: {str(e)}")
+
+    # SMTP fallback
+    smtp_pass_clean = smtp_pass.replace(" ", "")
+    msg = MIMEMultipart()
+    msg["From"]    = smtp_user
+    msg["To"]      = recipient
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain"))
     part = MIMEBase("application", "octet-stream")
     part.set_payload(csv_bytes)
     encoders.encode_base64(part)
-    part.add_header("Content-Disposition", f'attachment; filename="bioattend_backup_{today}.csv"')
+    part.add_header("Content-Disposition", f'attachment; filename="{csv_filename}"')
     msg.attach(part)
 
-    # ── Send via SMTP in thread (non-blocking) ──
-    # Strip spaces — Gmail App Passwords are displayed as 'xxxx xxxx xxxx xxxx'
-    smtp_pass_clean = smtp_pass.replace(" ", "")
-
-    def _send():
+    def _smtp_send():
         last_err = None
-        # Try STARTTLS on port 587 first, then SSL on port 465 as fallback
-        attempts = [
-            (smtp_host, 587, "STARTTLS"),
-            (smtp_host, 465, "SSL"),
-        ]
-        for host, port, mode in attempts:
+        for host, port, mode in [(smtp_host, 587, "STARTTLS"), (smtp_host, 465, "SSL")]:
             try:
                 if mode == "SSL":
                     import ssl as _ssl
                     ctx = _ssl.create_default_context()
-                    with smtplib.SMTP_SSL(host, port, context=ctx) as server:
-                        server.login(smtp_user, smtp_pass_clean)
-                        server.sendmail(smtp_user, recipient, msg.as_string())
+                    with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as s:
+                        s.login(smtp_user, smtp_pass_clean)
+                        s.sendmail(smtp_user, recipient, msg.as_string())
                 else:
-                    with smtplib.SMTP(host, port, timeout=20) as server:
-                        server.ehlo()
-                        server.starttls()
-                        server.ehlo()
-                        server.login(smtp_user, smtp_pass_clean)
-                        server.sendmail(smtp_user, recipient, msg.as_string())
-                return  # success
+                    with smtplib.SMTP(host, port, timeout=20) as s:
+                        s.ehlo(); s.starttls(); s.ehlo()
+                        s.login(smtp_user, smtp_pass_clean)
+                        s.sendmail(smtp_user, recipient, msg.as_string())
+                return
             except Exception as ex:
                 last_err = ex
                 logger.warning(f"SMTP {mode}:{port} failed: {ex}")
-                continue
-        raise last_err  # all attempts failed
+        raise last_err
+
 
     try:
-        await asyncio.to_thread(_send)
+        await asyncio.to_thread(_smtp_send)
     except smtplib.SMTPAuthenticationError as e:
-        raise HTTPException(status_code=500, detail=f"Gmail authentication failed: {str(e)}. Make sure you are using a Gmail App Password (not your login password) and 2-Step Verification is enabled.")
+        raise HTTPException(status_code=500, detail=f"Gmail auth failed: {str(e)}. Use a Gmail App Password, not your login password.")
     except Exception as e:
         logger.error(f"Email backup error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
@@ -1245,9 +1288,11 @@ async def send_backup_email(req: BackupEmailRequest):
     return {
         "success": True,
         "message": f"Backup sent to {recipient}",
+        "method": "smtp",
         "records": len(records),
         "employees": len(all_emps)
     }
+
 
 @app.post("/api/backup/test-email")
 async def test_email(req: BackupEmailRequest):

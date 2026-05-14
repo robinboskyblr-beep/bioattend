@@ -2747,28 +2747,34 @@ async function loadBackupEmail() {
 }
 
 async function saveSmtpSettings() {
-  const smtpUser = document.getElementById('smtp-user-input')?.value.trim();
-  const smtpPass = document.getElementById('smtp-pass-input')?.value.trim();
+  const resendKey = document.getElementById('resend-key-input')?.value.trim();
+  const smtpUser  = document.getElementById('smtp-user-input')?.value.trim();
+  const smtpPass  = document.getElementById('smtp-pass-input')?.value.trim();
 
-  if (!smtpUser || !smtpUser.includes('@')) {
+  if (!resendKey && !smtpUser) {
+    showSettingStatus('smtp-save-status', '❌ Please enter a Resend API key OR a Gmail address + App Password.', false);
+    return;
+  }
+  if (smtpUser && !smtpUser.includes('@')) {
     showSettingStatus('smtp-save-status', '❌ Please enter a valid Gmail address.', false);
     return;
   }
-  if (!smtpPass) {
-    showSettingStatus('smtp-save-status', '❌ Please enter your Gmail App Password.', false);
-    return;
-  }
+
+  const payload = {};
+  if (resendKey) payload.resend_api_key = resendKey;
+  if (smtpUser)  payload.smtp_user = smtpUser;
+  if (smtpPass)  payload.smtp_pass = smtpPass;
 
   try {
     const r = await fetch(`${API}/settings/smtp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ smtp_user: smtpUser, smtp_pass: smtpPass })
+      body: JSON.stringify(payload)
     });
     const d = await r.json();
     if (r.ok && d.success) {
-      showSettingStatus('smtp-save-status', '✅ SMTP credentials saved! You can now send backup emails.', true);
-      // Update badge
+      const method = resendKey ? 'Resend API key' : 'Gmail credentials';
+      showSettingStatus('smtp-save-status', `✅ ${method} saved! You can now send backup emails.`, true);
       const badge = document.getElementById('smtp-configured-badge');
       if (badge) {
         badge.textContent = '✓ Configured';
@@ -2776,8 +2782,9 @@ async function saveSmtpSettings() {
         badge.style.color = '#22d3ee';
         badge.style.borderColor = 'rgba(34,211,238,0.3)';
       }
-      document.getElementById('smtp-pass-input').value = '';
-      toast('✅ SMTP credentials saved!', 'success');
+      if (resendKey) document.getElementById('resend-key-input').value = '';
+      if (smtpPass)  document.getElementById('smtp-pass-input').value = '';
+      toast('✅ Email settings saved!', 'success');
     } else {
       showSettingStatus('smtp-save-status', '❌ ' + (d.detail || 'Failed to save.'), false);
     }
@@ -2785,6 +2792,7 @@ async function saveSmtpSettings() {
     showSettingStatus('smtp-save-status', '❌ Cannot reach server.', false);
   }
 }
+
 
 async function saveBackupEmail() {
   const email = document.getElementById('backup-email-input')?.value.trim();
