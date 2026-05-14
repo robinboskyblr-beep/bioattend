@@ -326,6 +326,8 @@ class RegisterRequest(BaseModel):
     shift_end: str = "19:00"
     lunch_break_start: str = "13:00"
     lunch_break_end: str = "14:00"
+    break_start: str = "16:30"
+    break_end: str = "17:00"
     password: str = "emp123"
     monthly_salary: float = 0.0
     images: List[str]
@@ -340,6 +342,8 @@ class UpdateEmployeeRequest(BaseModel):
     shift_end: Optional[str] = None
     lunch_break_start: Optional[str] = None
     lunch_break_end: Optional[str] = None
+    break_start: Optional[str] = None
+    break_end: Optional[str] = None
     monthly_salary: Optional[float] = None
 
 class ChangePasswordRequest(BaseModel):
@@ -490,6 +494,8 @@ async def register_employee(req: RegisterRequest):
         "shift_end": req.shift_end,
         "lunch_break_start": req.lunch_break_start,
         "lunch_break_end": req.lunch_break_end,
+        "break_start": req.break_start,
+        "break_end": req.break_end,
         "monthly_salary": req.monthly_salary,
         "password": hash_password(req.password),
         "embeddings": embeddings,
@@ -546,6 +552,8 @@ async def update_employee(employee_id: str, req: UpdateEmployeeRequest):
     if req.shift_end is not None:        fields["shift_end"] = req.shift_end
     if req.lunch_break_start is not None: fields["lunch_break_start"] = req.lunch_break_start
     if req.lunch_break_end is not None:  fields["lunch_break_end"] = req.lunch_break_end
+    if req.break_start is not None:      fields["break_start"] = req.break_start
+    if req.break_end is not None:        fields["break_end"] = req.break_end
     if req.monthly_salary is not None:   fields["monthly_salary"] = req.monthly_salary
     if fields:
         update_employee_fields(employee_id, fields)

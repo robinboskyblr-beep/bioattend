@@ -1167,6 +1167,10 @@ async function registerEmployee(e) {
 
     lunch_break_end: document.getElementById('reg-lunch-end').value,
 
+    break_start: document.getElementById('reg-break-start').value,
+
+    break_end: document.getElementById('reg-break-end').value,
+
     monthly_salary: parseFloat(document.getElementById('reg-salary').value) || 0,
 
     password: document.getElementById('reg-password').value || 'emp123',
@@ -1402,6 +1406,9 @@ function renderEmployees(emps) {
         var lunchInfo = e.lunch_break_start
           ? ' | Lunch: ' + e.lunch_break_start + '-' + (e.lunch_break_end || '14:00')
           : '';
+        var breakInfo = e.break_start
+          ? ' | Break: ' + e.break_start + '-' + (e.break_end || '17:00')
+          : ' | Break: 16:30-17:00';
         return '<div class="emp-card glass-card">' +
           '<div class="emp-avatar">' + e.name[0] + '</div>' +
           '<div class="emp-name">' + e.name + '</div>' +
@@ -1409,7 +1416,7 @@ function renderEmployees(emps) {
           '<div class="emp-dept">' + e.department + '</div>' +
           '<div class="emp-role">' + e.role + '</div>' +
           '<div style="font-size:.75rem;color:var(--text2)">' + e.email + '</div>' +
-          '<div style="font-size:.73rem;color:var(--text2);margin-top:2px">' + shiftInfo + lunchInfo + '</div>' +
+          '<div style="font-size:.73rem;color:var(--text2);margin-top:2px">' + shiftInfo + lunchInfo + breakInfo + '</div>' +
           salary +
           '<div class="emp-actions">' +
           '<button class="btn-edit" onclick="editEmployee(\'' + e.id + '\')">&#9998; Edit</button>' +
@@ -1592,6 +1599,10 @@ function editEmployee(id) {
 
   document.getElementById('edit-lunch-end').value = emp.lunch_break_end || '14:00';
 
+  document.getElementById('edit-break-start').value = emp.break_start || '16:30';
+
+  document.getElementById('edit-break-end').value = emp.break_end || '17:00';
+
   document.getElementById('edit-salary').value = emp.monthly_salary || '';
 
   document.getElementById('edit-status').classList.add('hidden');
@@ -1736,6 +1747,10 @@ async function saveEmployee(e) {
     lunch_break_start: document.getElementById('edit-lunch-start').value,
 
     lunch_break_end: document.getElementById('edit-lunch-end').value,
+
+    break_start: document.getElementById('edit-break-start').value,
+
+    break_end: document.getElementById('edit-break-end').value,
 
     monthly_salary: parseFloat(document.getElementById('edit-salary').value) || 0
 
