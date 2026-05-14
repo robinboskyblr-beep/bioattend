@@ -125,14 +125,49 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .form-label{font-size:.8rem;font-weight:600;color:var(--blue);text-transform:uppercase;letter-spacing:.05em}
 .input-wrap{position:relative}
 .input-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:.9rem;color:var(--blue);pointer-events:none}
-.form-input{width:100%;padding:11px 14px 11px 38px;background:rgba(14,165,233,0.08);border:1px solid var(--glass-border);border-radius:10px;color:var(--text);font-size:.9rem;font-family:inherit;outline:none;transition:.2s}
-.form-input:not(.input-wrap .form-input){padding:11px 14px}
-select.form-input{padding:11px 14px;cursor:pointer}
-.form-input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(14,165,233,0.15)}
+/* ── Global dark select override — covers ALL <select> in the app —— */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: rgba(14,165,233,0.1) !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2300d4ff' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 11px;
+  border: 1px solid rgba(14,165,233,0.35) !important;
+  border-radius: 10px !important;
+  color: var(--text) !important;
+  font-family: inherit;
+  font-size: .9rem;
+  padding: 11px 36px 11px 13px !important;
+  cursor: pointer;
+  outline: none;
+  transition: border-color .2s, box-shadow .2s, background .2s;
+}
+select:focus {
+  border-color: var(--cyan) !important;
+  box-shadow: 0 0 0 3px rgba(0,212,255,0.18), 0 0 20px rgba(0,212,255,0.08) !important;
+  background-color: rgba(14,165,233,0.18) !important;
+}
+select option {
+  background: #0a1628 !important;
+  color: #f0f4ff !important;
+  padding: 10px 14px;
+  font-size: .88rem;
+}
+select option:hover, select option:checked {
+  background: rgba(14,165,233,0.35) !important;
+  color: #fff !important;
+}
+/* ── Base input styles (non-select) ── */
+.form-input{width:100%;background:rgba(14,165,233,0.08);border:1px solid var(--glass-border);border-radius:10px;color:var(--text);font-size:.9rem;font-family:inherit;outline:none;transition:.2s}
+.form-input:not(select){padding:11px 14px 11px 38px}
+.form-input:not(select):not(.input-wrap .form-input){padding:11px 14px}
+select.form-input { padding: 11px 36px 11px 13px !important; }
+.form-input:not(select):focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(14,165,233,0.15)}
 .form-input::placeholder{color:var(--text2)}
 
-/* ── Premium Custom Select ── */
-.select-wrap{position:relative;width:100%}
+/* ── Premium .form-select (custom wrap variant) ── */
 .form-select{
   width:100%;padding:12px 40px 12px 14px;
   background:linear-gradient(135deg,rgba(14,165,233,0.12),rgba(0,81,255,0.08));
@@ -149,7 +184,7 @@ select.form-input{padding:11px 14px;cursor:pointer}
   background:linear-gradient(135deg,rgba(14,165,233,0.2),rgba(0,81,255,0.12));
 }
 .form-select option{
-  background:#0f172a;color:var(--text);padding:10px;
+  background:#0a1628 !important;color:#f0f4ff;padding:10px;
 }
 .select-arrow{
   position:absolute;right:13px;top:50%;transform:translateY(-50%);
@@ -1007,7 +1042,8 @@ canvas{max-height:220px}
 @media(hover:none){
   .nav-item{min-height:48px}
   .btn-primary,.btn-secondary,.btn-danger,.btn-scan,.btn-kiosk-scan,.btn-scan-station{min-height:44px}
-  .form-input,select.form-input{min-height:44px;font-size:16px}/* prevents iOS zoom */
+  .form-input, select { min-height: 44px; font-size: 16px; } /* prevents iOS zoom */
+
   .role-tab{min-height:40px}
 }
 
