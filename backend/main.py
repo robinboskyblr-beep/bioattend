@@ -858,61 +858,91 @@ async def calculate_payroll(
     end_date: Optional[str] = None,
     employee_id: Optional[str] = None
 ):
-    records = get_attendance_by_filters(start_date=start_date, end_date=end_date, employee_id=employee_id)
-    all_emps = {e["id"]: e for e in get_all_employees()}
+    try:
+        # ── Fetch records (avoid composite-index requirement) ──
+        try:
+            records = get_attendance_by_filters(
+                start_date=start_date,
+                end_date=end_date,
+                employee_id=employee_id
+            )
+        except Exception as qe:
+            # Fallback: stream all then filter in Python (handles missing Firestore composite index)
+            logger.warning(f"Payroll compound query failed ({qe}), falling back to in-memory filter")
+            all_docs = list(ATTENDANCE_COL.stream())
+            records = [d.to_dict() for d in all_docs]
+            if employee_id:
+                records = [r for r in records if r.get("employee_id") == employee_id]
+            if start_date:
+                records = [r for r in records if r.get("date", "") >= start_date]
+            if end_date:
+                records = [r for r in records if r.get("date", "") <= end_date]
 
-    emp_records: dict = {}
-    for r in records:
-        eid = r["employee_id"]
-        emp_records.setdefault(eid, []).append(r)
+        all_emps = {e["id"]: e for e in get_all_employees()}
 
-    payroll = []
-    for uid, emp_recs in emp_records.items():
-        if uid not in all_emps:
-            continue
-        user         = all_emps[uid]
-        monthly_salary = float(user.get("monthly_salary", 0))
-        shift_start    = user.get("shift_start", "09:00")
-        working_days   = len(emp_recs)
-        total_penalty  = 0
-        late_days      = 0
-        late_details   = []
+        emp_records: dict = {}
+        for r in records:
+            eid = r.get("employee_id", "")
+            if eid:
+                emp_records.setdefault(eid, []).append(r)
 
-        for rec in emp_recs:
-            check_in = rec.get("check_in")
-            if not check_in:
+        payroll = []
+        for uid, emp_recs in emp_records.items():
+            if uid not in all_emps:
                 continue
-            try:
-                sh, sm = map(int, shift_start.split(":"))
-                ci_parts = check_in.split(":")
-                ch, cm   = int(ci_parts[0]), int(ci_parts[1])
-                minutes_late = (ch * 60 + cm) - (sh * 60 + sm)
-                if minutes_late > 10:
-                    total_penalty += 100
-                    late_days += 1
-                    late_details.append({"date": rec["date"], "check_in": check_in, "minutes_late": minutes_late, "penalty": 100})
-            except Exception:
-                pass
+            user           = all_emps[uid]
+            monthly_salary = float(user.get("monthly_salary", 0))
+            shift_start    = user.get("shift_start", "09:00")
+            working_days   = len(emp_recs)
+            total_penalty  = 0
+            late_days      = 0
+            late_details   = []
 
-        daily_rate  = monthly_salary / 26 if monthly_salary > 0 else 0
-        gross_earned = round(daily_rate * working_days, 2)
-        net_salary   = round(gross_earned - total_penalty, 2)
+            for rec in emp_recs:
+                check_in = rec.get("check_in")
+                if not check_in:
+                    continue
+                try:
+                    sh, sm = map(int, shift_start.split(":"))
+                    ci_parts = check_in.split(":")
+                    ch, cm   = int(ci_parts[0]), int(ci_parts[1])
+                    minutes_late = (ch * 60 + cm) - (sh * 60 + sm)
+                    if minutes_late > 10:
+                        total_penalty += 100
+                        late_days += 1
+                        late_details.append({
+                            "date": rec.get("date", ""),
+                            "check_in": check_in,
+                            "minutes_late": minutes_late,
+                            "penalty": 100
+                        })
+                except Exception:
+                    pass
 
-        payroll.append({
-            "employee_id":   uid,
-            "name":          user["name"],
-            "department":    user.get("department", ""),
-            "monthly_salary": monthly_salary,
-            "daily_rate":    round(daily_rate, 2),
-            "working_days":  working_days,
-            "gross_earned":  gross_earned,
-            "late_days":     late_days,
-            "total_penalty": total_penalty,
-            "net_salary":    net_salary,
-            "late_details":  late_details
-        })
+            daily_rate   = monthly_salary / 26 if monthly_salary > 0 else 0
+            gross_earned = round(daily_rate * working_days, 2)
+            net_salary   = round(gross_earned - total_penalty, 2)
 
-    return {"payroll": payroll, "period": {"start": start_date, "end": end_date}}
+            payroll.append({
+                "employee_id":    uid,
+                "name":           user.get("name", uid),
+                "department":     user.get("department", ""),
+                "monthly_salary": monthly_salary,
+                "daily_rate":     round(daily_rate, 2),
+                "working_days":   working_days,
+                "gross_earned":   gross_earned,
+                "late_days":      late_days,
+                "total_penalty":  total_penalty,
+                "net_salary":     net_salary,
+                "late_details":   late_details
+            })
+
+        return {"payroll": payroll, "period": {"start": start_date, "end": end_date}}
+
+    except Exception as e:
+        logger.error(f"Payroll calculation error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Payroll error: {str(e)}")
+
 
 # ─────────────────────────────────────────────
 # Backup Endpoints
