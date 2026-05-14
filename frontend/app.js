@@ -1972,7 +1972,10 @@ function exportAttendance() {
 
   });
 
-  downloadCSV(csv, `attendance_${new Date().toISOString().slice(0, 10)}.csv`);
+  // Fix: filename first, content second
+  const today = new Date().toISOString().slice(0, 10);
+  downloadCSV(`attendance_${today}.csv`, csv);
+
 
 }
 
@@ -2032,20 +2035,29 @@ async function exportAllData() {
 
   d.records.forEach(r => { csv += `"${r.name}","${r.employee_id}","${r.department || ''}","${r.date}","${r.check_in || ''}","${r.check_out || ''}","${r.status}","${r.confidence || 'Manual'}"\n`; });
 
-  downloadCSV(csv, `bioattend_all_${new Date().toISOString().slice(0, 10)}.csv`);
+  const today = new Date().toISOString().slice(0, 10);
+  downloadCSV(`bioattend_all_${today}.csv`, csv);
+
 
 }
 
 
 
-function downloadCSV(csv, filename) {
-
-  const a = document.createElement('a');
-
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-
-  a.download = filename; a.click();
-
+/**
+ * Universal CSV downloader — always filename first, content second.
+ * Adds BOM so Excel opens it correctly without encoding issues.
+ */
+function downloadCSV(filename, csvContent) {
+  const BOM  = '\uFEFF';
+  const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 
@@ -2233,19 +2245,96 @@ function renderPayrollReport(payroll, period) {
 
 
 function exportPayrollCSV() {
-
   if (!lastPayrollData.length) { toast('Generate a payroll report first', 'error'); return; }
 
+  const today = new Date().toISOString().slice(0, 10);
   let csv = 'Employee,Employee ID,Department,Monthly Salary,Daily Rate,Days Worked,Gross Earned,Late Days,Deductions,Net Salary\n';
 
   lastPayrollData.forEach(p => {
-
     csv += `"${p.name}","${p.employee_id}","${p.department || ''}","${p.monthly_salary}","${p.daily_rate}","${p.working_days}","${p.gross_earned}","${p.late_days}","${p.total_penalty}","${p.net_salary}"\n`;
-
   });
 
-  downloadCSV(csv, `payroll_${new Date().toISOString().slice(0,10)}.csv`);
+  downloadCSV(`payroll_${today}.csv`, csv);
+  toast('✅ Payroll CSV downloaded!', 'success');
+}
 
+function printPayroll() {
+  if (!lastPayrollData.length) { toast('Generate a payroll report first', 'error'); return; }
+
+  const period = (() => {
+    const s = document.getElementById('payroll-start')?.value;
+    const e = document.getElementById('payroll-end')?.value;
+    return (s && e) ? `${s} to ${e}` : new Date().toISOString().slice(0, 10);
+  })();
+
+  const rows = lastPayrollData.map(p => `
+    <tr>
+      <td>${p.name}</td>
+      <td>${p.employee_id}</td>
+      <td>${p.department || ''}</td>
+      <td>₹${Number(p.monthly_salary).toLocaleString('en-IN')}</td>
+      <td>${p.working_days}</td>
+      <td>₹${Number(p.gross_earned).toFixed(2)}</td>
+      <td>${p.late_days}</td>
+      <td>₹${Number(p.total_penalty).toFixed(2)}</td>
+      <td style="font-weight:700;color:#1d4ed8">₹${Number(p.net_salary).toFixed(2)}</td>
+    </tr>`).join('');
+
+  const win = window.open('', '_blank', 'width=1000,height=700');
+  win.document.write(`
+    <!DOCTYPE html><html><head>
+    <meta charset="utf-8">
+    <title>BioAttend Payroll Report — ${period}</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: 'Segoe UI', Arial, sans-serif; color: #111; background: #fff; padding: 32px; }
+      .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; border-bottom: 3px solid #1d4ed8; padding-bottom: 16px; }
+      .logo { font-size: 1.6rem; font-weight: 900; color: #1d4ed8; }
+      .sub  { font-size: .9rem; color: #555; margin-top: 4px; }
+      .period { font-size: 1rem; font-weight: 700; color: #1d4ed8; text-align: right; }
+      table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+      th { background: #1d4ed8; color: #fff; padding: 10px 8px; text-align: left; font-weight: 700; }
+      td { padding: 9px 8px; border-bottom: 1px solid #e5e7eb; }
+      tr:nth-child(even) td { background: #f0f4ff; }
+      tr:last-child td { border-bottom: none; }
+      tfoot td { background: #1e3a8a; color: #fff; font-weight: 700; padding: 10px 8px; }
+      .total-label { font-size: .8rem; color: #6b7280; text-align: right; margin-top: 16px; }
+      @media print {
+        body { padding: 16px; }
+        button { display: none !important; }
+      }
+    </style>
+    </head><body>
+    <div class="header">
+      <div>
+        <div class="logo">🏢 BioAttend</div>
+        <div class="sub">Workforce Attendance &amp; Payroll System</div>
+      </div>
+      <div class="period">📅 Period: ${period}<br><span style="font-size:.8rem;font-weight:400;color:#666">Generated: ${new Date().toLocaleString('en-IN')}</span></div>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Employee</th><th>ID</th><th>Department</th>
+        <th>Monthly Salary</th><th>Days Worked</th><th>Gross Earned</th>
+        <th>Late Days</th><th>Deductions</th><th>Net Pay</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr>
+        <td colspan="5">Total (${lastPayrollData.length} employees)</td>
+        <td>₹${lastPayrollData.reduce((s,p)=>s+Number(p.gross_earned),0).toFixed(2)}</td>
+        <td>${lastPayrollData.reduce((s,p)=>s+Number(p.late_days),0)}</td>
+        <td>₹${lastPayrollData.reduce((s,p)=>s+Number(p.total_penalty),0).toFixed(2)}</td>
+        <td>₹${lastPayrollData.reduce((s,p)=>s+Number(p.net_salary),0).toFixed(2)}</td>
+      </tr></tfoot>
+    </table>
+    <p class="total-label">* Deductions: ₹100 per late arrival</p>
+    <br>
+    <button onclick="window.print()" style="padding:10px 24px;background:#1d4ed8;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;font-weight:700">🖨️ Print</button>
+    &nbsp;
+    <button onclick="window.close()" style="padding:10px 24px;background:#6b7280;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer">✕ Close</button>
+    <script>setTimeout(()=>window.print(),400);<\/script>
+    </body></html>`);
+  win.document.close();
 }
 
 
@@ -2679,18 +2768,8 @@ function csvFromRecords(headers, rows) {
   return lines.join('\n');
 }
 
-function downloadCSV(filename, csvContent) {
-  const BOM = '\uFEFF';
-  const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-  const log = document.getElementById('backup-log');
-  if (log) log.innerHTML = '<span style="color:var(--green)">Downloaded: ' + filename + ' at ' + new Date().toLocaleTimeString() + '</span>';
-}
+// (second downloadCSV removed — unified at line 2041)
+
 
 async function backupToday() {
   try {
