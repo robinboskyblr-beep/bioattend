@@ -857,10 +857,49 @@
               <p id="mgr-status" class="reg-status hidden" style="margin-top:10px"></p>
             </div>
 
+            <!-- ══ Email Backup ══ -->
+            <div class="glass-card" style="padding:28px;border:1.5px solid rgba(0,212,255,.2)">
+              <h3 class="card-title" style="margin-bottom:6px">📧 Email Backup</h3>
+              <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:20px">
+                Send a complete CSV backup of all attendance records (every clock-in & clock-out) to an email address. Uses Gmail SMTP configured on the server.
+              </p>
+
+              <!-- Recipient Email -->
+              <div class="form-row" style="margin-bottom:14px">
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">📨 Backup Recipient Email</label>
+                  <div class="input-wrap">
+                    <span class="input-icon">@</span>
+                    <input type="email" id="backup-email-input" class="form-input" placeholder="e.g. admin@company.com" />
+                  </div>
+                </div>
+                <div class="form-group" style="display:flex;align-items:flex-end">
+                  <button class="btn-secondary" onclick="saveBackupEmail()" style="min-height:46px;white-space:nowrap">
+                    💾 Save Email
+                  </button>
+                </div>
+              </div>
+              <p id="backup-email-status" class="reg-status hidden" style="margin-top:0;margin-bottom:14px"></p>
+
+              <!-- Send Backup -->
+              <button id="send-backup-btn" class="btn-primary" onclick="sendEmailBackup()" style="width:100%;min-height:50px;font-size:1rem;letter-spacing:.02em">
+                <span class="btn-glow"></span>
+                <span id="send-backup-text">📤 Send Full Backup Now</span>
+              </button>
+              <p id="send-backup-status" class="reg-status hidden" style="margin-top:12px"></p>
+
+              <!-- Info box -->
+              <div style="margin-top:16px;padding:12px 14px;background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.15);border-radius:10px;font-size:.78rem;color:var(--text-muted)">
+                ℹ️ The backup CSV includes: <strong>Date, Employee Name, ID, Department, Clock In (AM), Lunch Out, Lunch In, Clock Out (Day), Status, Punches</strong> for all employees and all dates.
+                <br><br>
+                ⚙️ <strong>Server setup required:</strong> Set <code>SMTP_USER</code> (Gmail address) and <code>SMTP_PASS</code> (App Password) in your Render environment variables.
+              </div>
+            </div>
 
 
           </div>
         </div>
+
 
       </main>
     </div>

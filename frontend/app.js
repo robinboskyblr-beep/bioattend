@@ -596,6 +596,8 @@ function switchTab(el) {
 
   if (el.dataset.tab === 'tab-attendance') loadAttendance();
 
+  if (el.dataset.tab === 'tab-settings') loadBackupEmail();
+
   // Auto-close sidebar on mobile after tab selection
   const sidebar = document.getElementById('sidebar');
   if (sidebar && sidebar.classList.contains('open')) {
@@ -2709,4 +2711,76 @@ function checkAutoBackupSchedule(targetTime) {
     backupToday();
     toast('Auto-backup triggered at ' + targetTime, 'success');
   }
+}
+
+/* ─── Email Backup ─── */
+
+async function loadBackupEmail() {
+  try {
+    const r = await fetch(`${API}/settings/backup-email`);
+    const d = await r.json();
+    const inp = document.getElementById('backup-email-input');
+    if (inp && d.email) inp.value = d.email;
+  } catch(e) { /* silent */ }
+}
+
+async function saveBackupEmail() {
+  const email = document.getElementById('backup-email-input')?.value.trim();
+  const status = document.getElementById('backup-email-status');
+  if (!email || !email.includes('@')) {
+    showSettingStatus('backup-email-status', 'Please enter a valid email address.', false);
+    return;
+  }
+  try {
+    const r = await fetch(`${API}/settings/backup-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: email })
+    });
+    const d = await r.json();
+    if (r.ok && d.success) {
+      showSettingStatus('backup-email-status', `✅ Backup email saved: ${d.email}`, true);
+    } else {
+      showSettingStatus('backup-email-status', d.detail || 'Failed to save.', false);
+    }
+  } catch(e) {
+    showSettingStatus('backup-email-status', 'Cannot reach server.', false);
+  }
+}
+
+async function sendEmailBackup() {
+  const btn     = document.getElementById('send-backup-btn');
+  const btnText = document.getElementById('send-backup-text');
+  const status  = document.getElementById('send-backup-status');
+
+  if (btn) btn.disabled = true;
+  if (btnText) btnText.textContent = '⏳ Sending backup…';
+  if (status) { status.className = 'reg-status hidden'; }
+
+  try {
+    const r = await fetch(`${API}/backup/send-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})   // uses saved email from Firestore
+    });
+    const d = await r.json();
+
+    if (r.ok && d.success) {
+      showSettingStatus(
+        'send-backup-status',
+        `✅ Backup sent! ${d.records} attendance records & ${d.employees} employees → ${d.message.replace('Backup sent to ','')}`,
+        true
+      );
+      toast('📧 Backup emailed successfully!', 'success');
+    } else {
+      showSettingStatus('send-backup-status', '❌ ' + (d.detail || 'Failed to send.'), false);
+      toast('Backup failed: ' + (d.detail || 'Unknown error'), 'error');
+    }
+  } catch(e) {
+    showSettingStatus('send-backup-status', '❌ Cannot reach server: ' + e.message, false);
+    toast('Server error: ' + e.message, 'error');
+  }
+
+  if (btn) btn.disabled = false;
+  if (btnText) btnText.textContent = '📤 Send Full Backup Now';
 }

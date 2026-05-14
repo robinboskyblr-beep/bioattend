@@ -1,5 +1,7 @@
 import os
 import cv2
+import csv
+import io
 import json
 import time
 import uuid
@@ -7,7 +9,13 @@ import base64
 import shutil
 import logging
 import hashlib
+import smtplib
+import asyncio
 import numpy as np
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from datetime import datetime, date, timedelta, timezone
 from typing import Optional, List
 from pathlib import Path
@@ -1007,8 +1015,142 @@ async def debug_test():
     return result
 
 # ─────────────────────────────────────────────
-# Static frontend
+# Email Backup
 # ─────────────────────────────────────────────
+
+SETTINGS_COL = db_fs.collection("settings")
+
+class BackupEmailRequest(BaseModel):
+    recipient: Optional[str] = None   # override; if None use stored setting
+
+@app.post("/api/settings/backup-email")
+async def save_backup_email(req: BackupEmailRequest):
+    """Save the backup recipient email to Firestore settings."""
+    if not req.recipient or "@" not in req.recipient:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    SETTINGS_COL.document("backup").set({"email": req.recipient}, merge=True)
+    return {"success": True, "email": req.recipient}
+
+@app.get("/api/settings/backup-email")
+async def get_backup_email():
+    doc = SETTINGS_COL.document("backup").get()
+    if doc.exists:
+        return {"email": doc.to_dict().get("email", "")}
+    return {"email": ""}
+
+@app.post("/api/backup/send-email")
+async def send_backup_email(req: BackupEmailRequest):
+    """
+    Collect all attendance records + employee info and email a CSV to the
+    configured (or override) recipient using Gmail SMTP credentials stored
+    in environment variables SMTP_USER and SMTP_PASS.
+    """
+    # ── Determine recipient ──
+    recipient = req.recipient
+    if not recipient:
+        doc = SETTINGS_COL.document("backup").get()
+        recipient = doc.to_dict().get("email", "") if doc.exists else ""
+    if not recipient or "@" not in recipient:
+        raise HTTPException(status_code=400, detail="No backup email configured. Please save one in Settings first.")
+
+    # ── SMTP credentials from env ──
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASS", "")
+    smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+
+    if not smtp_user or not smtp_pass:
+        raise HTTPException(
+            status_code=500,
+            detail="SMTP credentials not configured. Set SMTP_USER and SMTP_PASS environment variables on Render."
+        )
+
+    IST = timezone(timedelta(hours=5, minutes=30))
+    now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
+    today   = datetime.now(IST).strftime("%Y-%m-%d")
+
+    # ── Fetch data ──
+    all_emps  = get_all_employees()
+    emp_map   = {e["id"]: e for e in all_emps}
+    all_recs  = list(ATTENDANCE_COL.stream())
+    records   = [r.to_dict() for r in all_recs]
+    records.sort(key=lambda r: (r.get("date", ""), r.get("name", "")))
+
+    # ── Build CSV in memory ──
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Date", "Employee Name", "Employee ID", "Department",
+        "Clock In (AM)", "Clock Out (Lunch)", "Clock In (PM)", "Clock Out (Day)",
+        "Status", "Punches", "Confidence %"
+    ])
+    for rec in records:
+        emp  = emp_map.get(rec.get("employee_id", ""), {})
+        dept = emp.get("department", rec.get("department", ""))
+        p1   = rec.get("check_in")    or "—"
+        p2   = rec.get("check_out")   or "—"
+        p3   = rec.get("check_in_2")  or "—"
+        p4   = rec.get("check_out_2") or "—"
+        punches = sum(1 for v in [p1, p2, p3, p4] if v != "—")
+        writer.writerow([
+            rec.get("date", ""),
+            rec.get("name", ""),
+            rec.get("employee_id", ""),
+            dept,
+            p1, p2, p3, p4,
+            rec.get("status", ""),
+            f"{punches}/4",
+            rec.get("confidence", ""),
+        ])
+    csv_bytes = output.getvalue().encode("utf-8")
+
+    # ── Compose email ──
+    msg = MIMEMultipart()
+    msg["From"]    = smtp_user
+    msg["To"]      = recipient
+    msg["Subject"] = f"BioAttend Backup — {today} (generated {now_str} IST)"
+
+    body = (
+        f"Hi,\n\n"
+        f"Please find attached the full BioAttend attendance backup generated on {now_str} IST.\n\n"
+        f"Summary:\n"
+        f"  • Total employees : {len(all_emps)}\n"
+        f"  • Total attendance records : {len(records)}\n\n"
+        f"The CSV contains all clock-in and clock-out punches for every employee.\n\n"
+        f"— Robinbosky BioAttend"
+    )
+    msg.attach(MIMEText(body, "plain"))
+
+    part = MIMEBase("application", "octet-stream")
+    part.set_payload(csv_bytes)
+    encoders.encode_base64(part)
+    part.add_header("Content-Disposition", f'attachment; filename="bioattend_backup_{today}.csv"')
+    msg.attach(part)
+
+    # ── Send via SMTP in thread (non-blocking) ──
+    def _send():
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, recipient, msg.as_string())
+
+    try:
+        await asyncio.to_thread(_send)
+    except smtplib.SMTPAuthenticationError:
+        raise HTTPException(status_code=500, detail="SMTP authentication failed. Check SMTP_USER and SMTP_PASS.")
+    except Exception as e:
+        logger.error(f"Email backup error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
+
+    logger.info(f"Backup email sent to {recipient} ({len(records)} records)")
+    return {
+        "success": True,
+        "message": f"Backup sent to {recipient}",
+        "records": len(records),
+        "employees": len(all_emps)
+    }
+
 
 frontend_dir = BASE_DIR / "frontend"
 if frontend_dir.exists():
