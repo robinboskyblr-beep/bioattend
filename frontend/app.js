@@ -93,31 +93,67 @@ function enterEmployeeKiosk() {
 
 function playBeep(type = 'success') {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc  = ctx.createOscillator();
+    const ctx  = new (window.AudioContext || window.webkitAudioContext)();
     const gain = ctx.createGain();
-    osc.connect(gain);
     gain.connect(ctx.destination);
+
     if (type === 'success') {
-      // Two-tone success beep
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.15);
-      osc.type = 'sine';
-      gain.gain.setValueAtTime(0.4, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.55);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.55);
+      // Bright 3-tone ascending chime — very audible
+      const notes = [
+        { freq: 780,  start: 0,    dur: 0.18 },
+        { freq: 1050, start: 0.20, dur: 0.18 },
+        { freq: 1400, start: 0.40, dur: 0.30 },
+      ];
+      gain.gain.setValueAtTime(0.6, ctx.currentTime);
+      notes.forEach(n => {
+        const osc = ctx.createOscillator();
+        osc.connect(gain);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(n.freq, ctx.currentTime + n.start);
+        gain.gain.setValueAtTime(0.6, ctx.currentTime + n.start);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + n.start + n.dur);
+        osc.start(ctx.currentTime + n.start);
+        osc.stop(ctx.currentTime + n.start + n.dur + 0.05);
+      });
+      // Screen green flash
+      _flashScreen('#00d4ff');
+
     } else {
-      // Error beep — low tone
-      osc.frequency.value = 300;
-      osc.type = 'sawtooth';
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.4);
+      // Double low buzz for error
+      [0, 0.30].forEach(offset => {
+        const osc = ctx.createOscillator();
+        osc.connect(gain);
+        osc.type = 'sawtooth';
+        osc.frequency.value = 260;
+        gain.gain.setValueAtTime(0.45, ctx.currentTime + offset);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 0.22);
+        osc.start(ctx.currentTime + offset);
+        osc.stop(ctx.currentTime + offset + 0.25);
+      });
+      // Screen red flash
+      _flashScreen('#f43f5e');
     }
   } catch(e) { /* AudioContext blocked — ignore */ }
 }
+
+function _flashScreen(color) {
+  const flash = document.createElement('div');
+  flash.style.cssText = `
+    position:fixed;inset:0;z-index:99999;
+    background:${color};opacity:.22;
+    pointer-events:none;
+    animation:_flash-fade .5s ease forwards;
+  `;
+  if (!document.getElementById('_flash-style')) {
+    const s = document.createElement('style');
+    s.id = '_flash-style';
+    s.textContent = '@keyframes _flash-fade{0%{opacity:.22}100%{opacity:0}}';
+    document.head.appendChild(s);
+  }
+  document.body.appendChild(flash);
+  setTimeout(() => flash.remove(), 600);
+}
+
 
 
 
@@ -726,7 +762,13 @@ function showKioskPopup(d) {
       card.classList.add(cfg.cls);
       avatar.textContent = res.name ? res.name[0].toUpperCase() : '?';
       greet.textContent  = cfg.greet;
-      name.textContent   = res.name;
+
+      // Name in LARGE bold text — readable from distance
+      name.textContent      = res.name;
+      name.style.fontSize   = 'clamp(1.7rem, 5vw, 2.8rem)';
+      name.style.fontWeight = '900';
+      name.style.textShadow = '0 0 28px rgba(0,212,255,.7)';
+
       action.innerHTML   = cfg.icon + ' ' + cfg.label;
       action.className   = 'kiosk-popup-action ' + cfg.actionCls;
       timeEl.textContent = '⏰ ' + toIST(res.time);
@@ -760,19 +802,23 @@ function showKioskPopup(d) {
       }
 
     } else {
-
-      card.classList.add('fail');
+      // already_complete — show success; unknown action — show error
+      const isComplete = res.action === 'already_complete';
+      card.classList.add(isComplete ? 'check-in' : 'fail');
       avatar.textContent = res.name ? res.name[0].toUpperCase() : '⚠';
-      greet.textContent  = greeting;
+      greet.textContent  = isComplete ? 'All Done Today! ✅' : 'Not Recognised';
       name.textContent   = res.name || '';
-      action.textContent = res.message || 'All 4 punches complete for today ✅';
-      action.className   = 'kiosk-popup-action fail';
+      name.style.fontSize   = res.name ? 'clamp(1.4rem,4vw,2.2rem)' : '';
+      name.style.fontWeight = res.name ? '900' : '';
+      name.style.textShadow = '';
+      action.textContent = res.message || (isComplete ? 'All 4 punches complete ✅' : 'Face not recognised');
+      action.className   = 'kiosk-popup-action ' + (isComplete ? 'in' : 'fail');
       timeEl.textContent = new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
-      conf.textContent   = '';
-      setKioskStatus('error', res.message || 'Already complete');
-      playBeep('error');
-
+      conf.textContent   = res.confidence ? 'Confidence: ' + res.confidence + '%' : 'Please try again or improve lighting';
+      setKioskStatus(isComplete ? 'success' : 'error', res.message || (isComplete ? 'Already complete' : 'Not recognised'));
+      playBeep(isComplete ? 'success' : 'error');
     }
+
 
   }
 

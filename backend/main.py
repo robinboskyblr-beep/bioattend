@@ -274,17 +274,20 @@ def str_to_emb(s: str) -> np.ndarray:
 def compare_with_all_employees(embedding: np.ndarray):
     """
     Compare a face embedding against all employees.
-    - v2 (LBP, 512-dim): chi-square similarity, threshold 0.72
+    - v2 (LBP, 512-dim): chi-square similarity, threshold 0.78 (tighter = fewer false matches)
     - v1 (raw pixel, 16384-dim): cosine similarity, threshold 0.90
-    Uses average of top-3 stored-sample scores per employee for robustness.
+    Uses median of top-3 stored-sample scores per employee for robustness.
+    Returns (best_match_id, best_score, all_candidates)
     """
     employees = get_all_employees()
     best_match = None
     best_score = 0.0
     is_v2 = (len(embedding) == EMB_V2_SIZE)
 
-    THRESHOLD_V2 = 0.72
+    THRESHOLD_V2 = 0.78   # raised from 0.72 — reduces false positives
     THRESHOLD_V1 = 0.90
+
+    all_candidates = []  # [(score, name, id)] for debugging
 
     for emp in employees:
         stored_embeddings = emp.get("embeddings", [])
@@ -293,26 +296,33 @@ def compare_with_all_employees(embedding: np.ndarray):
         for stored_emb in stored_embeddings:
             emb_arr = str_to_emb(stored_emb) if isinstance(stored_emb, str) else np.array(stored_emb, dtype=np.float32)
             stored_is_v2 = (len(emb_arr) == EMB_V2_SIZE)
-
-            # Only compare same-version embeddings
             if is_v2 != stored_is_v2:
                 continue
-
             score = chi_square_similarity(embedding, emb_arr) if is_v2 else cosine_similarity(embedding, emb_arr)
             scores_for_emp.append(score)
 
         if scores_for_emp:
-            # Average of best 3 samples → more robust than single best
             top3 = sorted(scores_for_emp, reverse=True)[:3]
-            avg = sum(top3) / len(top3)
-            if avg > best_score:
-                best_score = avg
+            # Use median of top-3 for stability (less affected by one outlier)
+            med = sorted(top3)[len(top3) // 2]
+            all_candidates.append((med, emp.get("name", ""), emp.get("id", "")))
+            if med > best_score:
+                best_score = med
                 best_match = emp.get("id")
 
+    all_candidates.sort(reverse=True)
     threshold = THRESHOLD_V2 if is_v2 else THRESHOLD_V1
+
+    # Extra safety: if top-2 scores are very close (< 5% gap), reject — ambiguous face
+    if len(all_candidates) >= 2:
+        gap = all_candidates[0][0] - all_candidates[1][0]
+        if best_score >= threshold and gap < 0.04:
+            logger.warning(f"Ambiguous match: {all_candidates[0][1]}({all_candidates[0][0]:.3f}) vs {all_candidates[1][1]}({all_candidates[1][0]:.3f}), gap={gap:.3f}")
+            return None, best_score, all_candidates[:3]
+
     if best_score >= threshold:
-        return best_match, best_score
-    return None, best_score
+        return best_match, best_score, all_candidates[:3]
+    return None, best_score, all_candidates[:3]
 
 def decode_base64_image(b64_str: str) -> np.ndarray:
     if "," in b64_str:
@@ -646,7 +656,7 @@ async def scan_face(req: ScanRequest):
         results = []
         for face_rect in faces:
             emb = extract_face_embedding(gray, face_rect)
-            matched_id, score = compare_with_all_employees(emb)
+            matched_id, score, candidates = compare_with_all_employees(emb)
             conf = round(score * 100, 1)
 
             if matched_id:
@@ -655,7 +665,6 @@ async def scan_face(req: ScanRequest):
                 today_recs.sort(key=lambda r: r.get("timestamp", ""))
 
                 if not today_recs:
-                    # Punch 1 — Morning Clock IN
                     rec_id = str(uuid.uuid4())
                     record = {
                         "id":          rec_id,
@@ -672,31 +681,34 @@ async def scan_face(req: ScanRequest):
                         "timestamp":   now.isoformat()
                     }
                     set_attendance_record(rec_id, record)
-                    results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in", "punch": 1, "time": t, "confidence": conf})
+                    results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in",      "punch": 1, "time": t, "confidence": conf})
 
                 else:
                     rec = today_recs[-1]
                     rec_id = rec["id"]
 
                     if rec.get("check_out") is None:
-                        # Punch 2 — Lunch OUT
                         update_attendance_record(rec_id, {"check_out": t})
-                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out", "punch": 2, "time": t, "confidence": conf})
+                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out",    "punch": 2, "time": t, "confidence": conf})
 
                     elif rec.get("check_in_2") is None:
-                        # Punch 3 — Afternoon IN
                         update_attendance_record(rec_id, {"check_in_2": t})
-                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2", "punch": 3, "time": t, "confidence": conf})
+                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2",   "punch": 3, "time": t, "confidence": conf})
 
                     elif rec.get("check_out_2") is None:
-                        # Punch 4 — End of Day OUT
                         update_attendance_record(rec_id, {"check_out_2": t})
-                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2", "punch": 4, "time": t, "confidence": conf})
+                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2",  "punch": 4, "time": t, "confidence": conf})
 
                     else:
-                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 4 attendance punches complete for today"})
+                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 4 attendance punches complete for today", "confidence": conf})
             else:
-                results.append({"employee_id": None, "action": "unknown", "message": f"Face not recognized (confidence: {conf}%)"})
+                top = candidates[0] if candidates else None
+                results.append({
+                    "employee_id": None,
+                    "action":      "unknown",
+                    "confidence":  conf,
+                    "message":     f"Face not recognized (best match: {top[1] if top else 'none'} at {round(top[0]*100,1) if top else 0}% — need ≥78%)"
+                })
 
         return {"success": True, "detected": True, "results": results, "face_count": len(faces)}
 
