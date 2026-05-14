@@ -1179,11 +1179,11 @@ async function registerEmployee(e) {
 
 const ROLE_CONFIG = {
 
-  admin:    { label: 'Username',      hint: 'Full system access',                        user: 'admin',   pass: 'admin123',   placeholder: 'admin' },
+  admin:    { label: 'Username',      hint: 'Full system access',                        user: '',  pass: '',  placeholder: 'Enter username' },
 
-  manager:  { label: 'Username',      hint: 'Attendance & reports',                      user: 'manager', pass: 'manager123', placeholder: 'manager' },
+  manager:  { label: 'Username',      hint: 'Attendance & reports',                      user: '',  pass: '',  placeholder: 'Enter username' },
 
-  employee: { label: 'Email Address', hint: '📸 Face scan kiosk will open after login',  user: '',        pass: '',           placeholder: 'your@email.com' }
+  employee: { label: 'Email Address', hint: '📸 Face scan kiosk will open after login',  user: '',  pass: '',  placeholder: 'your@email.com' }
 
 };
 
@@ -1387,6 +1387,7 @@ function renderEmployees(emps) {
           salary +
           '<div class="emp-actions">' +
           '<button class="btn-edit" onclick="editEmployee(\'' + e.id + '\')">&#9998; Edit</button>' +
+          '<button style="padding:6px 10px;font-size:.73rem;background:linear-gradient(135deg,#0ea5e9,#0284c7);border:none;border-radius:8px;color:#fff;cursor:pointer;font-weight:600" onclick="openReregisterModal(\'' + e.id + '\',\'' + e.name + '\')">&#128247; Re-register Face</button>' +
           '<button class="btn-danger" style="padding:6px 12px;font-size:.75rem" onclick="deleteEmployee(\'' + e.id + '\')">&#128465; Remove</button>' +
           '</div></div>';
       }).join('');
@@ -1401,6 +1402,118 @@ function filterEmployees() {
 
   renderEmployees(allEmployees.filter(e => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q) || e.department.toLowerCase().includes(q)));
 
+}
+
+
+
+
+/* ── Re-register Face Modal ── */
+
+let reregStream = null;
+let reregEmpId  = null;
+let reregCaptures = [];
+
+function openReregisterModal(empId, empName) {
+  reregEmpId = empId;
+  reregCaptures = [];
+
+  // Build modal HTML
+  const existingModal = document.getElementById('rereg-modal');
+  if (existingModal) existingModal.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'rereg-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px)';
+  modal.innerHTML = `
+    <div style="background:linear-gradient(135deg,#0f172a,#1e293b);border:1px solid rgba(0,212,255,.25);border-radius:20px;padding:28px;max-width:480px;width:95%;text-align:center">
+      <h3 style="color:#00d4ff;margin-bottom:4px;font-size:1.1rem">📷 Re-register Face</h3>
+      <p style="color:rgba(255,255,255,.55);font-size:.82rem;margin-bottom:16px">Capturing new face data for <strong style="color:#fff">${empName}</strong><br>Stand in good lighting and look at the camera. Capture 5 photos.</p>
+      <div style="position:relative;border-radius:12px;overflow:hidden;background:#000;margin-bottom:14px;aspect-ratio:4/3">
+        <video id="rereg-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
+        <canvas id="rereg-canvas" style="display:none"></canvas>
+        <div id="rereg-count-badge" style="position:absolute;top:10px;right:10px;background:rgba(0,212,255,.85);color:#000;font-weight:700;font-size:.85rem;padding:4px 10px;border-radius:20px">0 / 5</div>
+      </div>
+      <div id="rereg-thumbs" style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-bottom:14px"></div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button onclick="captureRereg()" style="padding:10px 22px;background:linear-gradient(135deg,#0ea5e9,#0284c7);border:none;border-radius:10px;color:#fff;font-weight:700;cursor:pointer;font-size:.9rem">📸 Capture</button>
+        <button id="rereg-submit-btn" onclick="submitRereg()" disabled style="padding:10px 22px;background:linear-gradient(135deg,#10b981,#059669);border:none;border-radius:10px;color:#fff;font-weight:700;cursor:pointer;font-size:.9rem;opacity:.4">✅ Save (0/5)</button>
+        <button onclick="closeReregModal()" style="padding:10px 18px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:10px;color:#fff;cursor:pointer;font-size:.9rem">✕ Cancel</button>
+      </div>
+      <p id="rereg-status" style="margin-top:12px;font-size:.82rem;color:rgba(255,255,255,.5)">Position your face clearly in the frame</p>
+    </div>`;
+  document.body.appendChild(modal);
+
+  // Start camera
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } })
+    .then(s => {
+      reregStream = s;
+      document.getElementById('rereg-video').srcObject = s;
+    })
+    .catch(e => { document.getElementById('rereg-status').textContent = 'Camera error: ' + e.message; });
+}
+
+function captureRereg() {
+  if (reregCaptures.length >= 8) { toast('Maximum 8 captures reached', 'info'); return; }
+  const v = document.getElementById('rereg-video');
+  const c = document.getElementById('rereg-canvas');
+  c.width = v.videoWidth || 640;
+  c.height = v.videoHeight || 480;
+  c.getContext('2d').drawImage(v, 0, 0);
+  const dataUrl = c.toDataURL('image/jpeg', 0.85);
+  reregCaptures.push(dataUrl);
+
+  // Update thumbs
+  const thumbs = document.getElementById('rereg-thumbs');
+  const img = document.createElement('img');
+  img.src = dataUrl;
+  img.style.cssText = 'width:52px;height:52px;object-fit:cover;border-radius:8px;border:2px solid #00d4ff';
+  thumbs.appendChild(img);
+
+  const count = reregCaptures.length;
+  document.getElementById('rereg-count-badge').textContent = count + ' / 5';
+  const submitBtn = document.getElementById('rereg-submit-btn');
+  submitBtn.textContent = '✅ Save (' + count + '/5)';
+  if (count >= 5) {
+    submitBtn.disabled = false;
+    submitBtn.style.opacity = '1';
+    document.getElementById('rereg-status').textContent = '✅ Ready to save! You can capture more for better accuracy.';
+  } else {
+    document.getElementById('rereg-status').textContent = (5 - count) + ' more capture(s) needed.';
+  }
+}
+
+async function submitRereg() {
+  if (reregCaptures.length < 5) { toast('Please capture at least 5 photos', 'error'); return; }
+  const btn = document.getElementById('rereg-submit-btn');
+  btn.disabled = true; btn.textContent = '⏳ Processing...';
+  document.getElementById('rereg-status').textContent = 'Uploading and processing face data...';
+
+  try {
+    const r = await fetch(`${API}/employees/${reregEmpId}/reregister-face`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: reregCaptures })
+    });
+    const d = await r.json();
+    if (d.success) {
+      toast('✅ ' + d.message, 'success');
+      closeReregModal();
+    } else {
+      document.getElementById('rereg-status').textContent = '❌ ' + (d.detail || 'Failed. Try again.');
+      btn.disabled = false; btn.textContent = '✅ Save (' + reregCaptures.length + '/5)';
+    }
+  } catch (e) {
+    document.getElementById('rereg-status').textContent = '❌ Server error: ' + e.message;
+    btn.disabled = false; btn.textContent = '✅ Save (' + reregCaptures.length + '/5)';
+  }
+}
+
+function closeReregModal() {
+  if (reregStream) reregStream.getTracks().forEach(t => t.stop());
+  reregStream = null;
+  reregCaptures = [];
+  const m = document.getElementById('rereg-modal');
+  if (m) m.remove();
 }
 
 

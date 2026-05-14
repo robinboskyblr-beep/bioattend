@@ -46,14 +46,14 @@
             <label class="form-label" id="username-label">Username</label>
             <div class="input-wrap">
               <span class="input-icon">⬡</span>
-              <input type="text" id="login-username" class="form-input" placeholder="admin" value="admin" />
+              <input type="text" id="login-username" class="form-input" placeholder="Enter username" />
             </div>
           </div>
           <div class="form-group">
             <label class="form-label">Password</label>
             <div class="input-wrap">
               <span class="input-icon">🔒</span>
-              <input type="password" id="login-password" class="form-input" placeholder="Enter password" value="admin123" />
+              <input type="password" id="login-password" class="form-input" placeholder="Enter password" />
             </div>
           </div>
 
@@ -816,20 +816,21 @@
               <p id="mgr-status" class="reg-status hidden" style="margin-top:10px"></p>
             </div>
 
-            <!-- Employee Password Reset -->
-            <div class="glass-card" style="padding:28px">
-              <h3 class="card-title" style="margin-bottom:18px">👤 Reset Employee Password</h3>
+            <!-- ══ Admin Force Reset Employee Password ══ -->
+            <div class="glass-card" style="padding:28px;border:1.5px solid rgba(239,68,68,.25)">
+              <h3 class="card-title" style="margin-bottom:6px">🔐 Reset Employee Password</h3>
+              <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:18px">Admin can reset any employee's portal password without knowing the old one.</p>
               <div class="form-row">
                 <div class="form-group">
-                  <label class="form-label">Employee ID</label>
-                  <div class="input-wrap"><span class="input-icon">🪪</span>
-                    <input type="text" id="emp-reset-id" class="form-input" placeholder="e.g. EMP001" />
-                  </div>
+                  <label class="form-label">Select Employee</label>
+                  <select id="admin-reset-emp-select" class="form-input" onchange="onAdminResetEmpSelect()">
+                    <option value="">-- Choose Employee --</option>
+                  </select>
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Current Password</label>
-                  <div class="input-wrap"><span class="input-icon">🔒</span>
-                    <input type="password" id="emp-reset-old" class="form-input" placeholder="Current password (default: emp123)" />
+                  <label class="form-label">Employee ID (auto-filled)</label>
+                  <div class="input-wrap"><span class="input-icon">🪪</span>
+                    <input type="text" id="admin-reset-emp-id" class="form-input" placeholder="Auto-filled on selection" readonly style="opacity:.65;cursor:not-allowed" />
                   </div>
                 </div>
               </div>
@@ -837,20 +838,54 @@
                 <div class="form-group">
                   <label class="form-label">New Password</label>
                   <div class="input-wrap"><span class="input-icon">🔑</span>
-                    <input type="password" id="emp-reset-new" class="form-input" placeholder="New password" />
+                    <input type="password" id="admin-reset-new-pw" class="form-input" placeholder="Set new password" />
                   </div>
                 </div>
                 <div class="form-group">
                   <label class="form-label">Confirm New Password</label>
                   <div class="input-wrap"><span class="input-icon">🔑</span>
-                    <input type="password" id="emp-reset-confirm" class="form-input" placeholder="Confirm new password" />
+                    <input type="password" id="admin-reset-confirm-pw" class="form-input" placeholder="Confirm new password" />
                   </div>
                 </div>
               </div>
-              <button class="btn-primary" onclick="resetEmployeePassword()">
-                <span class="btn-glow"></span>🔄 Reset Employee Password
+              <button class="btn-primary" onclick="adminForceResetPassword()" style="background:linear-gradient(135deg,#dc2626,#b91c1c)">
+                <span class="btn-glow"></span>🔄 Force Reset Password
               </button>
-              <p id="emp-reset-status" class="reg-status hidden" style="margin-top:10px"></p>
+              <p id="admin-reset-status" class="reg-status hidden" style="margin-top:10px"></p>
+            </div>
+
+            <!-- ══ Change Employee ID ══ -->
+            <div class="glass-card" style="padding:28px;border:1.5px solid rgba(245,158,11,.2)">
+              <h3 class="card-title" style="margin-bottom:6px">🪪 Change Employee ID / Login ID</h3>
+              <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:18px">Update an employee's login ID. Their attendance records will be updated automatically.</p>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Select Employee</label>
+                  <select id="change-id-emp-select" class="form-input" onchange="onChangeIdEmpSelect()">
+                    <option value="">-- Choose Employee --</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Current Employee ID</label>
+                  <div class="input-wrap"><span class="input-icon">🪪</span>
+                    <input type="text" id="change-id-current" class="form-input" placeholder="Auto-filled on selection" readonly style="opacity:.65;cursor:not-allowed" />
+                  </div>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">New Employee ID</label>
+                  <div class="input-wrap"><span class="input-icon">✏️</span>
+                    <input type="text" id="change-id-new" class="form-input" placeholder="e.g. EMP010" />
+                  </div>
+                </div>
+                <div class="form-group" style="display:flex;align-items:flex-end">
+                  <button class="btn-primary" onclick="changeEmployeeId()" style="width:100%;background:linear-gradient(135deg,#d97706,#b45309)">
+                    <span class="btn-glow"></span>✅ Update Employee ID
+                  </button>
+                </div>
+              </div>
+              <p id="change-id-status" class="reg-status hidden" style="margin-top:10px"></p>
             </div>
 
           </div>
@@ -860,6 +895,7 @@
     </div>
 
     <!-- Edit Employee Modal -->
+
     <div id="edit-modal" class="modal-overlay hidden" onclick="handleModalBackdrop(event)">
       <div class="modal-card glass-card">
         <div class="modal-header">

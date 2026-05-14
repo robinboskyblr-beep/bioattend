@@ -171,56 +171,135 @@ def get_attendance_by_filters(start_date=None, end_date=None, employee_id=None) 
     return [d.to_dict() for d in docs]
 
 # ─────────────────────────────────────────────
-# Face Recognition helpers (OpenCV Haar)
+# Face Recognition helpers — LBP Histogram (v2)
 # ─────────────────────────────────────────────
 
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
+EMB_V2_SIZE = 512   # 4×4 grid × 32 bins = 512
+EMB_V1_SIZE = 16384  # legacy raw pixel (128×128)
+
 def detect_faces(img_array: np.ndarray):
     gray = cv2.cvtColor(img_array, cv2.COLOR_BGR2GRAY)
-    gray = cv2.equalizeHist(gray)
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+    # CLAHE normalises illumination before detection
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray = clahe.apply(gray)
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(80, 80))
     return faces, gray
 
+
 def extract_face_embedding(gray: np.ndarray, face_rect) -> np.ndarray:
+    """
+    Extract LBP (Local Binary Pattern) histogram features from a face.
+    Returns a 512-dim normalised float32 vector — far more discriminative
+    than raw pixel values and robust to lighting / minor pose changes.
+    """
     x, y, w, h = face_rect
     face_roi = gray[y:y+h, x:x+w]
-    face_resized = cv2.resize(face_roi, (128, 128))
-    face_normalized = face_resized.astype(np.float32) / 255.0
-    return face_normalized.flatten()
+
+    # Resize to fixed 64×64
+    face_resized = cv2.resize(face_roi, (64, 64))
+
+    # CLAHE illumination normalisation on the crop
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    face_eq = clahe.apply(face_resized)
+
+    # LBP in a 4×4 grid of cells → 16 cells × 32 histogram bins = 512 features
+    GRID = 4
+    cell_h = face_eq.shape[0] // GRID
+    cell_w = face_eq.shape[1] // GRID
+    NEIGHBORS = [(-1,-1),(-1,0),(-1,1),(0,1),(1,1),(1,0),(1,-1),(0,-1)]
+    features = []
+
+    for gy in range(GRID):
+        for gx in range(GRID):
+            cell = face_eq[gy*cell_h:(gy+1)*cell_h, gx*cell_w:(gx+1)*cell_w].astype(np.int32)
+            lbp_map = np.zeros(cell.shape, dtype=np.uint8)
+            for bit_idx, (dy, dx) in enumerate(NEIGHBORS):
+                ys = np.clip(np.arange(cell_h) + dy, 0, cell_h - 1)
+                xs = np.clip(np.arange(cell_w) + dx, 0, cell_w - 1)
+                neighbor = cell[np.ix_(ys, xs)]
+                lbp_map |= ((cell >= neighbor).astype(np.uint8) << bit_idx)
+            hist, _ = np.histogram(lbp_map.flatten(), bins=32, range=(0, 256))
+            features.extend(hist.tolist())
+
+    feat = np.array(features, dtype=np.float32)
+    total = feat.sum()
+    return feat / total if total > 0 else feat
+
+
+def chi_square_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """
+    Chi-square similarity for histograms — the standard metric for LBP.
+    Returns a value in (0, 1]; 1.0 = identical histograms.
+    """
+    a = np.asarray(a, dtype=np.float32)
+    b = np.asarray(b, dtype=np.float32)
+    if len(a) != len(b):
+        return 0.0
+    mask = (a + b) > 0
+    if not mask.any():
+        return 0.0
+    chi2 = float(np.sum((a[mask] - b[mask]) ** 2 / (a[mask] + b[mask])))
+    return 1.0 / (1.0 + chi2)
+
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """Legacy cosine similarity for v1 raw-pixel embeddings."""
     norm_a = np.linalg.norm(a)
     norm_b = np.linalg.norm(b)
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return float(np.dot(a, b) / (norm_a * norm_b))
 
+
 def emb_to_str(emb: list) -> str:
-    """Serialize a float list embedding to a JSON string for Firestore storage."""
     return json.dumps(emb)
 
-def str_to_emb(s: str) -> np.ndarray:
-    """Deserialize a JSON string back to a numpy embedding."""
-    return np.array(json.loads(s))
 
-def compare_with_all_employees(embedding: np.ndarray, threshold: float = 0.82):
-    """Compare embedding against all employees stored in Firestore."""
+def str_to_emb(s: str) -> np.ndarray:
+    return np.array(json.loads(s), dtype=np.float32)
+
+
+def compare_with_all_employees(embedding: np.ndarray):
+    """
+    Compare a face embedding against all employees.
+    - v2 (LBP, 512-dim): chi-square similarity, threshold 0.72
+    - v1 (raw pixel, 16384-dim): cosine similarity, threshold 0.90
+    Uses average of top-3 stored-sample scores per employee for robustness.
+    """
     employees = get_all_employees()
     best_match = None
     best_score = 0.0
+    is_v2 = (len(embedding) == EMB_V2_SIZE)
+
+    THRESHOLD_V2 = 0.72
+    THRESHOLD_V1 = 0.90
+
     for emp in employees:
         stored_embeddings = emp.get("embeddings", [])
+        scores_for_emp = []
+
         for stored_emb in stored_embeddings:
-            # Support both JSON string (new) and raw list (legacy)
-            if isinstance(stored_emb, str):
-                emb_arr = str_to_emb(stored_emb)
-            else:
-                emb_arr = np.array(stored_emb)
-            score = cosine_similarity(embedding, emb_arr)
-            if score > best_score:
-                best_score = score
+            emb_arr = str_to_emb(stored_emb) if isinstance(stored_emb, str) else np.array(stored_emb, dtype=np.float32)
+            stored_is_v2 = (len(emb_arr) == EMB_V2_SIZE)
+
+            # Only compare same-version embeddings
+            if is_v2 != stored_is_v2:
+                continue
+
+            score = chi_square_similarity(embedding, emb_arr) if is_v2 else cosine_similarity(embedding, emb_arr)
+            scores_for_emp.append(score)
+
+        if scores_for_emp:
+            # Average of best 3 samples → more robust than single best
+            top3 = sorted(scores_for_emp, reverse=True)[:3]
+            avg = sum(top3) / len(top3)
+            if avg > best_score:
+                best_score = avg
                 best_match = emp.get("id")
+
+    threshold = THRESHOLD_V2 if is_v2 else THRESHOLD_V1
     if best_score >= threshold:
         return best_match, best_score
     return None, best_score
@@ -471,6 +550,60 @@ async def update_employee(employee_id: str, req: UpdateEmployeeRequest):
     if fields:
         update_employee_fields(employee_id, fields)
     return {"success": True, "message": f"Employee {employee_id} updated successfully"}
+
+
+class ReregisterFaceRequest(BaseModel):
+    images: List[str]
+
+@app.post("/api/employees/{employee_id}/reregister-face")
+async def reregister_face(employee_id: str, req: ReregisterFaceRequest):
+    """
+    Re-process face photos for an existing employee using the new LBP algorithm.
+    Replaces old v1 (raw pixel) embeddings with new v2 (LBP histogram) ones.
+    """
+    emp = get_employee(employee_id)
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    embeddings = []
+    face_images_saved = []
+
+    for i, b64_img in enumerate(req.images):
+        try:
+            img = decode_base64_image(b64_img)
+            if img is None:
+                continue
+            faces, gray = detect_faces(img)
+            if len(faces) == 0:
+                continue
+            largest_face = max(faces, key=lambda f: f[2] * f[3])
+            emb = extract_face_embedding(gray, largest_face)
+            embeddings.append(emb_to_str(emb.tolist()))
+
+            face_path = FACES_DIR / f"{employee_id}_{i}.jpg"
+            x, y, w, h = largest_face
+            face_img = img[y:y+h, x:x+w]
+            cv2.imwrite(str(face_path), face_img)
+            face_images_saved.append(str(face_path))
+        except Exception as e:
+            logger.error(f"Re-register image {i} error: {e}")
+            continue
+
+    if len(embeddings) < 1:
+        raise HTTPException(status_code=400, detail="No valid face detected in provided photos. Please retake with good lighting.")
+
+    update_employee_fields(employee_id, {
+        "embeddings": embeddings,
+        "face_images": face_images_saved,
+        "reregistered_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+    })
+
+    return {
+        "success": True,
+        "message": f"Face data updated for {emp['name']} with {len(embeddings)} new LBP samples",
+        "employee_id": employee_id,
+        "samples": len(embeddings)
+    }
 
 # ─────────────────────────────────────────────
 # Face Scanning / Attendance (4-punch system)
