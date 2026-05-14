@@ -741,30 +741,55 @@ async def get_attendance_history(start_date: Optional[str] = None, end_date: Opt
 
 @app.get("/api/dashboard/stats")
 async def get_dashboard_stats():
-    all_emps  = get_all_employees()
-    IST = timezone(timedelta(hours=5, minutes=30))
-    today_str = datetime.now(IST).strftime("%Y-%m-%d")
-    today_recs = get_today_records(today_str)
+    try:
+        IST = timezone(timedelta(hours=5, minutes=30))
+        today_str = datetime.now(IST).strftime("%Y-%m-%d")
 
-    total_employees = len(all_emps)
-    present_today   = len(set(r["employee_id"] for r in today_recs))
-    absent_today    = total_employees - present_today
+        all_emps   = get_all_employees()
+        today_recs = get_today_records(today_str)
 
-    # Weekly stats
-    week_stats = {}
-    for i in range(7):
-        d = (date.today() - timedelta(days=i)).strftime("%Y-%m-%d")
-        day_recs = get_today_records(d)
-        week_stats[d] = len(set(r["employee_id"] for r in day_recs))
+        # Filter out any malformed records missing required fields
+        safe_today = [r for r in today_recs if r.get("employee_id") and r.get("date")]
 
-    return {
-        "total_employees":  total_employees,
-        "present_today":    present_today,
-        "absent_today":     absent_today,
-        "attendance_rate":  round((present_today / total_employees * 100) if total_employees > 0 else 0, 1),
-        "today_records":    today_recs,
-        "weekly_stats":     week_stats
-    }
+        total_employees = len(all_emps)
+        present_today   = len(set(r["employee_id"] for r in safe_today))
+        absent_today    = max(0, total_employees - present_today)
+
+        # Weekly stats — use IST dates
+        week_stats = {}
+        for i in range(7):
+            d = (datetime.now(IST) - timedelta(days=i)).strftime("%Y-%m-%d")
+            day_recs = get_today_records(d)
+            safe_day = [r for r in day_recs if r.get("employee_id")]
+            week_stats[d] = len(set(r["employee_id"] for r in safe_day))
+
+        # Build safe today_records list for the frontend
+        today_out = []
+        for r in safe_today:
+            today_out.append({
+                "employee_id": r.get("employee_id", ""),
+                "name":        r.get("name", "Unknown"),
+                "department":  r.get("department", ""),
+                "date":        r.get("date", today_str),
+                "check_in":    r.get("check_in") or "—",
+                "check_out":   r.get("check_out"),
+                "check_in_2":  r.get("check_in_2"),
+                "check_out_2": r.get("check_out_2"),
+                "status":      r.get("status", "present"),
+                "confidence":  r.get("confidence", 0),
+            })
+
+        return {
+            "total_employees":  total_employees,
+            "present_today":    present_today,
+            "absent_today":     absent_today,
+            "attendance_rate":  round((present_today / total_employees * 100) if total_employees > 0 else 0, 1),
+            "today_records":    today_out,
+            "weekly_stats":     week_stats
+        }
+    except Exception as e:
+        logger.error(f"Dashboard stats error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Dashboard error: {str(e)}")
 
 # ─────────────────────────────────────────────
 # Payroll
@@ -908,6 +933,29 @@ async def backup_employees():
         safe.append({k: v for k, v in e.items() if k not in ("embeddings", "password", "face_images")})
     safe.sort(key=lambda e: e.get("name", ""))
     return {"employees": safe, "total": len(safe), "exported_at": datetime.now().isoformat()}
+
+@app.get("/api/debug/test")
+async def debug_test():
+    """Diagnostic endpoint — tests Firestore and returns any error."""
+    result = {}
+    try:
+        emps = get_all_employees()
+        result["employees_count"] = len(emps)
+    except Exception as e:
+        result["employees_error"] = str(e)
+
+    try:
+        IST = timezone(timedelta(hours=5, minutes=30))
+        today = datetime.now(IST).strftime("%Y-%m-%d")
+        recs = get_today_records(today)
+        result["today_records_count"] = len(recs)
+        result["today"] = today
+        if recs:
+            result["sample_record_keys"] = list(recs[0].keys())
+    except Exception as e:
+        result["attendance_error"] = str(e)
+
+    return result
 
 # ─────────────────────────────────────────────
 # Static frontend
