@@ -1201,17 +1201,42 @@ async def send_backup_email(req: BackupEmailRequest):
     msg.attach(part)
 
     # ── Send via SMTP in thread (non-blocking) ──
+    # Strip spaces — Gmail App Passwords are displayed as 'xxxx xxxx xxxx xxxx'
+    smtp_pass_clean = smtp_pass.replace(" ", "")
+
     def _send():
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, recipient, msg.as_string())
+        last_err = None
+        # Try STARTTLS on port 587 first, then SSL on port 465 as fallback
+        attempts = [
+            (smtp_host, 587, "STARTTLS"),
+            (smtp_host, 465, "SSL"),
+        ]
+        for host, port, mode in attempts:
+            try:
+                if mode == "SSL":
+                    import ssl as _ssl
+                    ctx = _ssl.create_default_context()
+                    with smtplib.SMTP_SSL(host, port, context=ctx) as server:
+                        server.login(smtp_user, smtp_pass_clean)
+                        server.sendmail(smtp_user, recipient, msg.as_string())
+                else:
+                    with smtplib.SMTP(host, port, timeout=20) as server:
+                        server.ehlo()
+                        server.starttls()
+                        server.ehlo()
+                        server.login(smtp_user, smtp_pass_clean)
+                        server.sendmail(smtp_user, recipient, msg.as_string())
+                return  # success
+            except Exception as ex:
+                last_err = ex
+                logger.warning(f"SMTP {mode}:{port} failed: {ex}")
+                continue
+        raise last_err  # all attempts failed
 
     try:
         await asyncio.to_thread(_send)
-    except smtplib.SMTPAuthenticationError:
-        raise HTTPException(status_code=500, detail="SMTP authentication failed. Check SMTP_USER and SMTP_PASS.")
+    except smtplib.SMTPAuthenticationError as e:
+        raise HTTPException(status_code=500, detail=f"Gmail authentication failed: {str(e)}. Make sure you are using a Gmail App Password (not your login password) and 2-Step Verification is enabled.")
     except Exception as e:
         logger.error(f"Email backup error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
@@ -1224,6 +1249,85 @@ async def send_backup_email(req: BackupEmailRequest):
         "employees": len(all_emps)
     }
 
+@app.post("/api/backup/test-email")
+async def test_email(req: BackupEmailRequest):
+    """
+    Send a tiny test email to diagnose SMTP connectivity.
+    Returns detailed error messages to help the user fix configuration.
+    """
+    # Get recipient
+    recipient = req.recipient
+    if not recipient:
+        doc = SETTINGS_COL.document("backup").get()
+        recipient = doc.to_dict().get("email", "") if doc.exists else ""
+    if not recipient or "@" not in recipient:
+        raise HTTPException(status_code=400, detail="No recipient email configured.")
+
+    # Get SMTP credentials
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASS", "")
+    if not smtp_user or not smtp_pass:
+        smtp_doc = SETTINGS_COL.document("smtp").get()
+        if smtp_doc.exists:
+            sd = smtp_doc.to_dict()
+            smtp_user = smtp_user or sd.get("smtp_user", "")
+            smtp_pass = smtp_pass or sd.get("smtp_pass", "")
+
+    if not smtp_user or not smtp_pass:
+        raise HTTPException(status_code=500, detail="SMTP credentials not saved. Go to Settings → SMTP Setup first.")
+
+    smtp_pass_clean = smtp_pass.replace(" ", "")
+    IST = timezone(timedelta(hours=5, minutes=30))
+    now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M IST")
+
+    msg = MIMEText(
+        f"Hello!\n\nThis is a test email from BioAttend sent at {now_str}.\n\n"
+        f"If you see this, your email backup is working correctly!\n\n"
+        f"— Robinbosky BioAttend",
+        "plain"
+    )
+    msg["From"]    = smtp_user
+    msg["To"]      = recipient
+    msg["Subject"] = f"BioAttend Test Email — {now_str}"
+
+    diag = {"attempts": []}
+
+    def _try_send():
+        attempts = [
+            ("smtp.gmail.com", 587, "STARTTLS"),
+            ("smtp.gmail.com", 465, "SSL"),
+        ]
+        for host, port, mode in attempts:
+            try:
+                if mode == "SSL":
+                    import ssl as _ssl
+                    ctx = _ssl.create_default_context()
+                    with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as server:
+                        server.login(smtp_user, smtp_pass_clean)
+                        server.sendmail(smtp_user, recipient, msg.as_string())
+                else:
+                    with smtplib.SMTP(host, port, timeout=20) as server:
+                        server.ehlo()
+                        server.starttls()
+                        server.ehlo()
+                        server.login(smtp_user, smtp_pass_clean)
+                        server.sendmail(smtp_user, recipient, msg.as_string())
+                diag["attempts"].append({"mode": mode, "port": port, "result": "SUCCESS"})
+                return True
+            except smtplib.SMTPAuthenticationError as ae:
+                diag["attempts"].append({"mode": mode, "port": port, "result": f"AUTH FAIL: {ae}"})
+            except Exception as ex:
+                diag["attempts"].append({"mode": mode, "port": port, "result": f"ERROR: {ex}"})
+        return False
+
+    success = await asyncio.to_thread(_try_send)
+    if success:
+        return {"success": True, "message": f"Test email sent to {recipient}!", "diagnostics": diag}
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail=f"All SMTP attempts failed. Diagnostics: {diag['attempts']}"
+        )
 
 frontend_dir = BASE_DIR / "frontend"
 if frontend_dir.exists():

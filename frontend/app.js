@@ -2847,3 +2847,48 @@ async function sendEmailBackup() {
   if (btn) btn.disabled = false;
   if (btnText) btnText.textContent = '📤 Send Full Backup Now';
 }
+
+async function sendTestEmail() {
+  const btn     = document.getElementById('test-email-btn');
+  const btnText = document.getElementById('test-email-text');
+  const status  = document.getElementById('send-backup-status');
+
+  if (btn) btn.disabled = true;
+  if (btnText) btnText.textContent = '⏳ Sending test…';
+  if (status) status.className = 'reg-status hidden';
+
+  try {
+    const r = await fetch(`${API}/backup/test-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const d = await r.json();
+
+    if (r.ok && d.success) {
+      // Show which port worked
+      const successAttempt = (d.diagnostics?.attempts || []).find(a => a.result === 'SUCCESS');
+      const portInfo = successAttempt ? ` via port ${successAttempt.port} ${successAttempt.mode}` : '';
+      showSettingStatus(
+        'send-backup-status',
+        `✅ Test email sent${portInfo}! Check your inbox.`,
+        true
+      );
+      toast('📧 Test email delivered! Check inbox.', 'success');
+    } else {
+      // Show exact diagnostic info
+      const detail = d.detail || 'Unknown error';
+      showSettingStatus(
+        'send-backup-status',
+        `❌ Test failed: ${detail}`,
+        false
+      );
+      toast('Test failed — see error below', 'error');
+    }
+  } catch(e) {
+    showSettingStatus('send-backup-status', `❌ Cannot reach server: ${e.message}`, false);
+  }
+
+  if (btn) btn.disabled = false;
+  if (btnText) btnText.textContent = '🔍 Send Test Email (diagnose issues)';
+}
