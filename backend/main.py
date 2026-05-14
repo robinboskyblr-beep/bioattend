@@ -127,6 +127,13 @@ def get_all_employees() -> List[dict]:
     docs = EMPLOYEES_COL.stream()
     return [d.to_dict() for d in docs]
 
+def get_employee_by_email(email: str) -> Optional[dict]:
+    """Find an employee document by their email address."""
+    docs = EMPLOYEES_COL.where("email", "==", email.lower().strip()).limit(1).stream()
+    for d in docs:
+        return d.to_dict()
+    return None
+
 # ─────────────────────────────────────────────
 # Firestore helpers — Attendance
 # ─────────────────────────────────────────────
@@ -299,8 +306,10 @@ async def login(req: LoginRequest):
             }
         raise HTTPException(status_code=401, detail="Invalid password")
 
-    # ── Employee ──
+    # ── Employee — try by employee_id first, then by email ──
     emp = get_employee(req.username)
+    if not emp:
+        emp = get_employee_by_email(req.username)
     if emp:
         stored_pw = emp.get("password", hash_password("emp123"))
         if stored_pw == hash_password(req.password):
@@ -308,12 +317,12 @@ async def login(req: LoginRequest):
                 "success": True,
                 "role": "employee",
                 "name": emp["name"],
-                "employee_id": req.username,
+                "employee_id": emp["id"],
                 "department": emp.get("department", ""),
                 "email": emp.get("email", ""),
                 "shift_start": emp.get("shift_start", "09:00"),
-                "shift_end": emp.get("shift_end", "18:00"),
-                "token": f"employee_{req.username}"
+                "shift_end": emp.get("shift_end", "19:00"),
+                "token": f"employee_{emp['id']}"
             }
         raise HTTPException(status_code=401, detail="Invalid password")
 

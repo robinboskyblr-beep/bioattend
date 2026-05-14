@@ -277,19 +277,8 @@ async function doLogin() {
 
       if (d.role === 'employee') {
 
-        // Route employee to face-scan-only screen
-
-        currentEmpId = d.employee_id;
-
-        document.getElementById('emp-display-name').textContent = d.name;
-
-        const hr = new Date().getHours();
-
-        document.getElementById('emp-greeting').textContent =
-
-          hr < 12 ? 'Good Morning,' : hr < 17 ? 'Good Afternoon,' : 'Good Evening,';
-
-        showScreen('employee-screen');
+        // Employee → generic kiosk (face identifies who they are)
+        showScreen('kiosk-screen');
 
       } else {
 
@@ -1190,11 +1179,11 @@ async function registerEmployee(e) {
 
 const ROLE_CONFIG = {
 
-  admin:    { label: 'Username', hint: 'Full system access', user: 'admin',   pass: 'admin123',   placeholder: 'admin' },
+  admin:    { label: 'Username',      hint: 'Full system access',                        user: 'admin',   pass: 'admin123',   placeholder: 'admin' },
 
-  manager:  { label: 'Username', hint: 'Attendance & reports', user: 'manager', pass: 'manager123', placeholder: 'manager' },
+  manager:  { label: 'Username',      hint: 'Attendance & reports',                      user: 'manager', pass: 'manager123', placeholder: 'manager' },
 
-  employee: { label: 'Employee ID', hint: 'Your Employee ID + password', user: '', pass: '', placeholder: 'e.g. EMP001' }
+  employee: { label: 'Email Address', hint: '📸 Face scan kiosk will open after login',  user: '',        pass: '',           placeholder: 'your@email.com' }
 
 };
 
@@ -1209,41 +1198,39 @@ function selectRole(role) {
   document.getElementById(`tab-${role}-btn`).classList.add('active');
 
   const cfg = ROLE_CONFIG[role];
+  const userInput = document.getElementById('login-username');
+  const loginBtnText = document.getElementById('login-btn-text');
+  const kioskEntry = document.getElementById('kiosk-entry-btn');
 
   document.getElementById('username-label').textContent = cfg.label;
-
-  document.getElementById('login-username').placeholder = cfg.placeholder;
-
-  document.getElementById('login-username').value = cfg.user;
+  userInput.placeholder = cfg.placeholder;
+  userInput.value = cfg.user;
+  // Switch input type for email keyboard on mobile
+  userInput.type = (role === 'employee') ? 'email' : 'text';
 
   document.getElementById('login-password').value = cfg.pass;
-
   document.getElementById('role-hint-text').textContent = cfg.hint;
 
+  // Update login button label
+  if (loginBtnText) loginBtnText.textContent = (role === 'employee') ? 'Open Kiosk' : 'Access System';
+
+  // Show/hide kiosk shortcut button
+  if (kioskEntry) kioskEntry.parentElement.style.display = (role === 'employee') ? 'none' : '';
+
   const box = document.getElementById('creds-box');
-
   const credUser = document.getElementById('cred-user');
-
   const credPass = document.getElementById('cred-pass');
 
   if (role === 'employee') {
-
     box.style.display = 'none';
-
   } else {
-
     box.style.display = '';
-
     credUser.textContent = cfg.user;
-
     credPass.textContent = cfg.pass;
-
   }
 
   // Clear previous error
-
   const err = document.getElementById('login-error');
-
   if (err) err.classList.add('hidden');
 
 }
