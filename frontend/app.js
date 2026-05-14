@@ -1585,9 +1585,9 @@ function editEmployee(id) {
 
   document.getElementById('edit-name').value = emp.name || '';
 
-  document.getElementById('edit-dept').value = emp.department || 'Engineering';
+  document.getElementById('edit-dept').value = emp.department || 'AI Automation Engineer';
 
-  document.getElementById('edit-role').value = emp.role || '';
+  document.getElementById('edit-role').value = emp.role || 'AI Automation Engineer';
 
   document.getElementById('edit-email').value = emp.email || '';
 
