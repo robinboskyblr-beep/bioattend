@@ -2722,10 +2722,73 @@ async function loadBackupEmail() {
     const inp = document.getElementById('backup-email-input');
     if (inp && d.email) inp.value = d.email;
   } catch(e) { /* silent */ }
+
+  // Load SMTP config status
+  try {
+    const rs = await fetch(`${API}/settings/smtp`);
+    const ds = await rs.json();
+    const badge = document.getElementById('smtp-configured-badge');
+    const userInp = document.getElementById('smtp-user-input');
+    if (badge) {
+      if (ds.configured) {
+        badge.textContent = '✓ Configured';
+        badge.style.background = 'rgba(34,211,238,0.15)';
+        badge.style.color = '#22d3ee';
+        badge.style.borderColor = 'rgba(34,211,238,0.3)';
+        if (userInp && ds.smtp_user) userInp.value = ds.smtp_user;
+      } else {
+        badge.textContent = '● Not Configured';
+        badge.style.background = 'rgba(244,63,94,0.15)';
+        badge.style.color = '#f43f5e';
+        badge.style.borderColor = 'rgba(244,63,94,0.3)';
+      }
+    }
+  } catch(e) { /* silent */ }
+}
+
+async function saveSmtpSettings() {
+  const smtpUser = document.getElementById('smtp-user-input')?.value.trim();
+  const smtpPass = document.getElementById('smtp-pass-input')?.value.trim();
+
+  if (!smtpUser || !smtpUser.includes('@')) {
+    showSettingStatus('smtp-save-status', '❌ Please enter a valid Gmail address.', false);
+    return;
+  }
+  if (!smtpPass) {
+    showSettingStatus('smtp-save-status', '❌ Please enter your Gmail App Password.', false);
+    return;
+  }
+
+  try {
+    const r = await fetch(`${API}/settings/smtp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ smtp_user: smtpUser, smtp_pass: smtpPass })
+    });
+    const d = await r.json();
+    if (r.ok && d.success) {
+      showSettingStatus('smtp-save-status', '✅ SMTP credentials saved! You can now send backup emails.', true);
+      // Update badge
+      const badge = document.getElementById('smtp-configured-badge');
+      if (badge) {
+        badge.textContent = '✓ Configured';
+        badge.style.background = 'rgba(34,211,238,0.15)';
+        badge.style.color = '#22d3ee';
+        badge.style.borderColor = 'rgba(34,211,238,0.3)';
+      }
+      document.getElementById('smtp-pass-input').value = '';
+      toast('✅ SMTP credentials saved!', 'success');
+    } else {
+      showSettingStatus('smtp-save-status', '❌ ' + (d.detail || 'Failed to save.'), false);
+    }
+  } catch(e) {
+    showSettingStatus('smtp-save-status', '❌ Cannot reach server.', false);
+  }
 }
 
 async function saveBackupEmail() {
   const email = document.getElementById('backup-email-input')?.value.trim();
+
   const status = document.getElementById('backup-email-status');
   if (!email || !email.includes('@')) {
     showSettingStatus('backup-email-status', 'Please enter a valid email address.', false);

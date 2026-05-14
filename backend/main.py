@@ -1051,7 +1051,37 @@ async def debug_test():
 SETTINGS_COL = db_fs.collection("settings")
 
 class BackupEmailRequest(BaseModel):
-    recipient: Optional[str] = None   # override; if None use stored setting
+    recipient: Optional[str] = None
+
+class SmtpSettingsRequest(BaseModel):
+    smtp_user: str
+    smtp_pass: str
+    smtp_host: Optional[str] = "smtp.gmail.com"
+    smtp_port: Optional[int] = 587
+
+@app.post("/api/settings/smtp")
+async def save_smtp_settings(req: SmtpSettingsRequest):
+    """Save SMTP credentials to Firestore (used when env vars are not set)."""
+    if not req.smtp_user or "@" not in req.smtp_user:
+        raise HTTPException(status_code=400, detail="Invalid Gmail address")
+    if not req.smtp_pass:
+        raise HTTPException(status_code=400, detail="App password cannot be empty")
+    SETTINGS_COL.document("smtp").set({
+        "smtp_user": req.smtp_user,
+        "smtp_pass": req.smtp_pass,
+        "smtp_host": req.smtp_host or "smtp.gmail.com",
+        "smtp_port": req.smtp_port or 587,
+    })
+    return {"success": True, "message": "SMTP settings saved"}
+
+@app.get("/api/settings/smtp")
+async def get_smtp_settings():
+    doc = SETTINGS_COL.document("smtp").get()
+    if doc.exists:
+        d = doc.to_dict()
+        # Never return the password — just whether it's configured
+        return {"configured": True, "smtp_user": d.get("smtp_user", ""), "smtp_host": d.get("smtp_host", "smtp.gmail.com"), "smtp_port": d.get("smtp_port", 587)}
+    return {"configured": False, "smtp_user": "", "smtp_host": "smtp.gmail.com", "smtp_port": 587}
 
 @app.post("/api/settings/backup-email")
 async def save_backup_email(req: BackupEmailRequest):
@@ -1083,16 +1113,29 @@ async def send_backup_email(req: BackupEmailRequest):
     if not recipient or "@" not in recipient:
         raise HTTPException(status_code=400, detail="No backup email configured. Please save one in Settings first.")
 
-    # ── SMTP credentials from env ──
+    # ── SMTP credentials: env vars first, then Firestore ──
     smtp_user = os.environ.get("SMTP_USER", "")
     smtp_pass = os.environ.get("SMTP_PASS", "")
-    smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_host = os.environ.get("SMTP_HOST", "")
+    smtp_port_str = os.environ.get("SMTP_PORT", "")
+
+    if not smtp_user or not smtp_pass:
+        # Fall back to Firestore-stored credentials
+        smtp_doc = SETTINGS_COL.document("smtp").get()
+        if smtp_doc.exists:
+            sd = smtp_doc.to_dict()
+            smtp_user = smtp_user or sd.get("smtp_user", "")
+            smtp_pass = smtp_pass or sd.get("smtp_pass", "")
+            smtp_host = smtp_host or sd.get("smtp_host", "smtp.gmail.com")
+            smtp_port_str = smtp_port_str or str(sd.get("smtp_port", 587))
+
+    smtp_host = smtp_host or "smtp.gmail.com"
+    smtp_port = int(smtp_port_str) if smtp_port_str else 587
 
     if not smtp_user or not smtp_pass:
         raise HTTPException(
             status_code=500,
-            detail="SMTP credentials not configured. Set SMTP_USER and SMTP_PASS environment variables on Render."
+            detail="SMTP credentials not configured. Please add your Gmail address and App Password in Settings → Email Backup → SMTP Setup."
         )
 
     IST = timezone(timedelta(hours=5, minutes=30))

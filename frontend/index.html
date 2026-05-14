@@ -899,13 +899,42 @@
               </button>
               <p id="send-backup-status" class="reg-status hidden" style="margin-top:12px"></p>
 
-              <!-- Info box -->
-              <div style="margin-top:16px;padding:12px 14px;background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.15);border-radius:10px;font-size:.78rem;color:var(--text-muted)">
-                ℹ️ The backup CSV includes: <strong>Date, Employee Name, ID, Department, Clock In (AM), Lunch Out, Lunch In, Clock Out (Day), Status, Punches</strong> for all employees and all dates.
-                <br><br>
-                ⚙️ <strong>Server setup required:</strong> Set <code>SMTP_USER</code> (Gmail address) and <code>SMTP_PASS</code> (App Password) in your Render environment variables.
+              <!-- SMTP Setup -->
+              <div style="margin-top:16px;padding:16px;background:rgba(14,165,233,0.06);border:1px solid rgba(14,165,233,0.2);border-radius:12px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                  <span style="font-size:.85rem;font-weight:700;color:var(--cyan)">⚙️ Gmail SMTP Setup</span>
+                  <span id="smtp-configured-badge" style="font-size:.72rem;padding:3px 10px;border-radius:20px;background:rgba(244,63,94,0.15);color:#f43f5e;border:1px solid rgba(244,63,94,0.3)">● Not Configured</span>
+                </div>
+                <p style="font-size:.76rem;color:var(--text2);margin-bottom:12px">
+                  Enter your Gmail address and a <strong>Gmail App Password</strong> (not your login password). 
+                  <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--cyan);text-decoration:none">Get App Password →</a>
+                </p>
+                <div class="form-row" style="margin-bottom:10px">
+                  <div class="form-group">
+                    <label class="form-label" style="font-size:.78rem">📧 Gmail Address (Sender)</label>
+                    <div class="input-wrap">
+                      <span class="input-icon">@</span>
+                      <input type="email" id="smtp-user-input" class="form-input" placeholder="yourname@gmail.com" />
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" style="font-size:.78rem">🔑 Gmail App Password</label>
+                    <div class="input-wrap">
+                      <span class="input-icon">🔐</span>
+                      <input type="password" id="smtp-pass-input" class="form-input" placeholder="xxxx xxxx xxxx xxxx" />
+                    </div>
+                  </div>
+                </div>
+                <button class="btn-secondary" onclick="saveSmtpSettings()" style="width:100%;min-height:42px">
+                  💾 Save SMTP Credentials
+                </button>
+                <p id="smtp-save-status" class="reg-status hidden" style="margin-top:10px;font-size:.8rem"></p>
+                <div style="margin-top:12px;font-size:.73rem;color:var(--text2);padding:8px;background:rgba(0,0,0,0.2);border-radius:8px">
+                  ℹ️ The backup CSV includes: <strong>Date, Name, ID, Department, Clock In, Lunch Out, Lunch In, Clock Out, Status, Punches</strong> for all records.
+                </div>
               </div>
             </div>
+
 
 
           </div>
