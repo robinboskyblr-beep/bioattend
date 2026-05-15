@@ -288,34 +288,60 @@ def _validate_punch_time(emp: dict, action: str, hhmm: str) -> tuple:
     """
     Returns (allowed: bool, message: str).
     Blocks a punch if attempted too early relative to the employee's schedule.
-    hhmm: current time as "HH:MM" or "HH:MM:SS"
+
+    Rules for all 6 punches:
+      check_in    → after  shift_start  − 30 min   (early clock-in window)
+      check_out   → after  lunch_start  − 2  min   (Lunch Out window)
+      check_in_2  → after  lunch_END    − 2  min   (Return from Lunch — must wait for lunch to finish)
+      check_out_3 → after  break_start  − 2  min   (Break Out window)
+      check_in_3  → after  break_END    − 2  min   (Return from Break — must wait for break to finish)
+      check_out_2 → after  shift_end    − 2  min   (Clock Out window)
     """
     def to_mins(t: str) -> int:
         p = t.split(":")
         return int(p[0]) * 60 + int(p[1])
 
     now   = to_mins(hhmm)
-    grace = PUNCH_EARLY_GRACE
+    grace = PUNCH_EARLY_GRACE          # 2 minutes
+    early = 30                         # Clock In: allowed up to 30 min before shift
 
+    ss = emp.get("shift_start",       "09:00")
     ls = emp.get("lunch_break_start", "13:00")
+    le = emp.get("lunch_break_end",   "14:00")
     bs = emp.get("break_start",       "16:30")
+    be = emp.get("break_end",         "17:00")
     se = emp.get("shift_end",         "18:00")
 
     rules = {
-        "check_in":    (None,
-                        ""),
+        # Punch 1 — Clock In: allow from 30 min before shift_start
+        "check_in":    (to_mins(ss) - early,
+                        f"⏰ Clock In is not allowed yet. "
+                        f"Your shift starts at {ss}. "
+                        f"You may clock in from {_fmt_mins(to_mins(ss) - early)}."),
+
+        # Punch 2 — Lunch Out: allow 2 min before lunch starts
         "check_out":   (to_mins(ls) - grace,
                         f"⏰ Lunch Out is not allowed yet. "
                         f"Your lunch break starts at {ls}. Please wait."),
-        "check_in_2":  (to_mins(ls),
-                        f"⏰ Lunch hasn't started yet. "
-                        f"Your lunch break starts at {ls}."),
+
+        # Punch 3 — Return from Lunch: allow 2 min before lunch ENDS
+        #            (employee must stay on lunch until lunch_break_end)
+        "check_in_2":  (to_mins(le) - grace,
+                        f"⏰ You cannot return from lunch yet. "
+                        f"Your lunch break ends at {le}. Please wait."),
+
+        # Punch 4 — Break Out: allow 2 min before break starts
         "check_out_3": (to_mins(bs) - grace,
                         f"⏰ Break Out is not allowed yet. "
                         f"Your break starts at {bs}. Please wait."),
-        "check_in_3":  (to_mins(bs),
-                        f"⏰ Break hasn't started yet. "
-                        f"Your break starts at {bs}."),
+
+        # Punch 5 — Return from Break: allow 2 min before break ENDS
+        #            (employee must stay on break until break_end)
+        "check_in_3":  (to_mins(be) - grace,
+                        f"⏰ You cannot return from break yet. "
+                        f"Your break ends at {be}. Please wait."),
+
+        # Punch 6 — Clock Out: allow 2 min before shift ends
         "check_out_2": (to_mins(se) - grace,
                         f"⏰ Clock Out is not allowed yet. "
                         f"Your shift ends at {se}. Please wait."),
@@ -324,6 +350,12 @@ def _validate_punch_time(emp: dict, action: str, hhmm: str) -> tuple:
     if min_t is not None and now < min_t:
         return False, msg
     return True, ""
+
+
+def _fmt_mins(total_mins: int) -> str:
+    """Convert total minutes from midnight to HH:MM string."""
+    h, m = divmod(max(total_mins, 0), 60)
+    return f"{h:02d}:{m:02d}"
 
 
 def _record_punch(emp: dict, matched_id: str, today_recs: list,
