@@ -195,10 +195,10 @@ try:
     from deepface import DeepFace as _DeepFace
     import tensorflow as _tf
     _tf.get_logger().setLevel("ERROR")   # silence TF INFO spam
-    # Warm-up: trigger model download/load at startup, not on first request
-    _DeepFace.build_model("ArcFace")
+    # NOTE: Model loads lazily on first scan — do NOT call build_model() here
+    # as it loads 400MB into RAM and OOMs on Render free tier (512MB limit).
     DEEPFACE_AVAILABLE = True
-    logger.info("DeepFace ArcFace model loaded successfully.")
+    logger.info("DeepFace ArcFace available — model will load on first scan.")
 except Exception as _e:
     DEEPFACE_AVAILABLE = False
     logger.warning(f"DeepFace not available ({_e}). Falling back to LBP.")

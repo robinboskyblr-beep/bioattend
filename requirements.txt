@@ -10,8 +10,7 @@ numpy>=1.26.4,<2.0.0
 # ── Firebase ───────────────────────────────────────────────────────────────
 firebase-admin==7.4.0
 
-# ── Face Recognition (requires Python <=3.12 — set PYTHON_VERSION=3.11.9) ──
-# Render env var: PYTHON_VERSION=3.11.9  |  .python-version file: 3.11.9
-deepface==0.0.93
-tf-keras==2.19.0
-tensorflow-cpu==2.19.0
+# ── Face Recognition ───────────────────────────────────────────────────────
+# NOTE: TensorFlow/DeepFace (ArcFace) requires >512MB RAM — exceeds Render free tier.
+# App automatically falls back to LBP histogram matching when deepface is not available.
+# To enable ArcFace on a paid plan (≥1GB RAM), add: deepface==0.0.93 tf-keras==2.19.0 tensorflow-cpu==2.19.0
