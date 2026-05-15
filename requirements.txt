@@ -13,7 +13,7 @@ firebase-admin==7.4.0
 # ── Face Recognition — Tier 1 (InsightFace, ~150MB RAM, no TensorFlow) ────
 # Real ArcFace 512-d embeddings via ONNX Runtime — best accuracy on free tier
 insightface>=0.7.3
-onnxruntime-cpu>=1.16.0
+onnxruntime>=1.16.0
 
 # ── Face Recognition — Tier 2 fallback (~100MB RAM) ──────────────────────
 mediapipe>=0.10.14,<1.0.0
