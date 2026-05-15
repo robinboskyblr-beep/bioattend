@@ -81,10 +81,6 @@ function stopStream(s) { if (s) s.getTracks().forEach(t => t.stop()); }
 
 function enterEmployeeKiosk() {
   showScreen('kiosk-screen');
-  // Auto-enable auto-scan after short delay
-  setTimeout(() => {
-    if (!kioskAutoOn) toggleKioskAuto();
-  }, 1500);
 }
 
 
@@ -725,101 +721,67 @@ function showKioskPopup(d) {
 
   if (kioskPopupTimer) clearTimeout(kioskPopupTimer);
 
-  const hr = new Date().getHours();
-  const greeting = hr < 12 ? 'Good Morning!' : hr < 17 ? 'Good Afternoon!' : 'Good Evening!';
-
   card.className = 'kiosk-popup-card';
   if (punches) punches.innerHTML = '';
 
-  if (!d.success || !d.detected) {
+  // Determine what happened and build the single message
+  let msgText = 'Face not matched';
+  let isSuccess = false;
 
-    card.classList.add('fail');
-    avatar.textContent  = '⚠';
-    greet.textContent   = 'Not Recognised';
-    name.textContent    = '';
-    action.textContent  = d.message || 'No face detected';
-    action.className    = 'kiosk-popup-action fail';
-    timeEl.textContent  = '';
-    conf.textContent    = 'Please try again or adjust lighting';
-    setKioskStatus('error', d.message || 'No face detected');
-    playBeep('error');
-
-  } else {
-
+  if (d.success && d.detected && d.results && d.results.length > 0) {
     const res = d.results[0];
+    const clockInActions  = ['check_in', 'check_in_2', 'check_in_3'];
+    const clockOutActions = ['check_out', 'check_out_3', 'check_out_2'];
 
-    const PUNCH_CONFIG = {
-      check_in:    { cls: 'check-in',  greet: greeting,              icon: '✅', label: 'Clocked <strong>IN</strong>',            badge: '🟢 Morning In',    actionCls: 'in'  },
-      check_out:   { cls: 'check-out', greet: 'Enjoy your lunch! 🍽', icon: '☕', label: 'Clocked <strong>OUT</strong> (Lunch)',    badge: '🔴 Lunch Break',   actionCls: 'out' },
-      check_in_2:  { cls: 'check-in',  greet: 'Welcome back! 👋',    icon: '✅', label: 'Clocked <strong>IN</strong> (Afternoon)', badge: '🟢 Afternoon In',  actionCls: 'in'  },
-      check_out_2: { cls: 'check-out', greet: 'See you tomorrow! 🌙', icon: '🚪', label: 'Clocked <strong>OUT</strong> — Day Done', badge: '🔴 End of Day',    actionCls: 'out' },
-    };
-
-    const cfg = PUNCH_CONFIG[res.action];
-
-    if (cfg) {
-
-      card.classList.add(cfg.cls);
-      avatar.textContent = res.name ? res.name[0].toUpperCase() : '?';
-      greet.textContent  = cfg.greet;
-
-      // Name in LARGE bold text — readable from distance
-      name.textContent      = res.name;
-      name.style.fontSize   = 'clamp(1.7rem, 5vw, 2.8rem)';
-      name.style.fontWeight = '900';
-      name.style.textShadow = '0 0 28px rgba(0,212,255,.7)';
-
-      action.innerHTML   = cfg.icon + ' ' + cfg.label;
-      action.className   = 'kiosk-popup-action ' + cfg.actionCls;
-      timeEl.textContent = '⏰ ' + toIST(res.time);
-      conf.textContent   = cfg.badge + '  ·  Confidence: ' + res.confidence + '%';
-      setKioskStatus('success', res.name + ' — ' + cfg.badge + ' at ' + toIST(res.time));
-      playBeep('success');
+    if (clockInActions.includes(res.action)) {
+      msgText   = `${res.name} successfully clocked in`;
+      isSuccess = true;
       loadKioskTodayLog();
-
-      // Show today's punch summary in popup
-      if (punches) {
-        // Fetch today record for this employee to show all punches
-        fetch(`${API}/employees/my-attendance/${res.employee_id}`)
-          .then(r => r.json())
-          .then(data => {
-            if (data.today) {
-              const rec = data.today;
-              const punchData = [
-                { label: '🟢 Morning In',   val: rec.check_in },
-                { label: '🔴 Lunch Out',     val: rec.check_out },
-                { label: '🟢 Lunch In',      val: rec.check_in_2 },
-                { label: '🔴 Day Out (7PM)', val: rec.check_out_2 },
-              ];
-              punches.innerHTML = punchData.map(p =>
-                `<div style="background:rgba(255,255,255,.06);border-radius:8px;padding:5px 8px;">
-                  <div style="opacity:.55;font-size:.7rem">${p.label}</div>
-                  <div style="font-weight:600;color:${p.val ? '#00d4ff' : 'rgba(255,255,255,.25)'}">${p.val ? toIST(p.val) : '—'}</div>
-                </div>`
-              ).join('');
-            }
-          }).catch(() => {});
-      }
-
+      playBeep('success');
+      setKioskStatus('success', msgText);
+    } else if (clockOutActions.includes(res.action)) {
+      msgText   = `${res.name} successfully clocked out`;
+      isSuccess = true;
+      loadKioskTodayLog();
+      playBeep('success');
+      setKioskStatus('success', msgText);
     } else {
-      // already_complete — show success; unknown action — show error
-      const isComplete = res.action === 'already_complete';
-      card.classList.add(isComplete ? 'check-in' : 'fail');
-      avatar.textContent = res.name ? res.name[0].toUpperCase() : '⚠';
-      greet.textContent  = isComplete ? 'All Done Today! ✅' : 'Not Recognised';
-      name.textContent   = res.name || '';
-      name.style.fontSize   = res.name ? 'clamp(1.4rem,4vw,2.2rem)' : '';
-      name.style.fontWeight = res.name ? '900' : '';
-      name.style.textShadow = '';
-      action.textContent = res.message || (isComplete ? 'All 4 punches complete ✅' : 'Face not recognised');
-      action.className   = 'kiosk-popup-action ' + (isComplete ? 'in' : 'fail');
-      timeEl.textContent = new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
-      conf.textContent   = res.confidence ? 'Confidence: ' + res.confidence + '%' : 'Please try again or improve lighting';
-      setKioskStatus(isComplete ? 'success' : 'error', res.message || (isComplete ? 'Already complete' : 'Not recognised'));
-      playBeep(isComplete ? 'success' : 'error');
+      // already_complete or unknown → treat as no-match
+      msgText = 'Face not matched';
+      playBeep('error');
+      setKioskStatus('error', msgText);
     }
+  } else {
+    msgText = 'Face not matched';
+    playBeep('error');
+    setKioskStatus('error', msgText);
+  }
 
-
+  // Populate popup elements
+  if (isSuccess) {
+    card.classList.add('check-in');
+    avatar.textContent        = '';
+    greet.textContent         = '';
+    name.textContent          = '';
+    name.style.fontSize       = '';
+    name.style.fontWeight     = '';
+    name.style.textShadow     = '';
+    action.textContent        = msgText;
+    action.className          = 'kiosk-popup-action in';
+    timeEl.textContent        = '';
+    conf.textContent          = '';
+  } else {
+    card.classList.add('fail');
+    avatar.textContent        = '⚠';
+    greet.textContent         = '';
+    name.textContent          = '';
+    name.style.fontSize       = '';
+    name.style.fontWeight     = '';
+    name.style.textShadow     = '';
+    action.textContent        = msgText;
+    action.className          = 'kiosk-popup-action fail';
+    timeEl.textContent        = '';
+    conf.textContent          = '';
   }
 
   // Show popup with animation
@@ -831,17 +793,17 @@ function showKioskPopup(d) {
     prog.style.transition = 'none';
     prog.style.width = '100%';
     setTimeout(() => {
-      prog.style.transition = 'width 5s linear';
+      prog.style.transition = 'width 4s linear';
       prog.style.width = '0%';
     }, 50);
   }
 
-  // Auto-dismiss after 5s
+  // Auto-dismiss after 4s
   kioskPopupTimer = setTimeout(() => {
     popup.classList.remove('show');
     setTimeout(() => popup.classList.add('hidden'), 400);
     setKioskStatus('', 'Position your face inside the oval guide');
-  }, 5200);
+  }, 4200);
 
 }
 
@@ -1908,20 +1870,23 @@ function renderAttendanceTable(records) {
 
   if (!tbody) return;
 
-  tbody.innerHTML = records.length === 0 ? '<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--text2)">No attendance records found</td></tr>' :
+  tbody.innerHTML = records.length === 0 ? '<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--text2)">No attendance records found</td></tr>' :
 
     records.slice().reverse().map(r => {
-      const p = [r.check_in, r.check_out, r.check_in_2, r.check_out_2].filter(Boolean).length;
+      const p = [r.check_in, r.check_out, r.check_in_2, r.check_out_3, r.check_in_3, r.check_out_2].filter(Boolean).length;
+      const t = v => v ? `<span style="font-family:'Orbitron',sans-serif;font-size:.78rem">${v}</span>` : '<span style="opacity:.3">—</span>';
       return `<tr>
         <td><strong>${r.name}</strong><br><span style="font-size:.75rem;color:var(--text2)">${r.employee_id}</span></td>
         <td>${r.department || ''}</td>
         <td>${r.date}</td>
-        <td style="color:var(--green);font-family:'Orbitron',sans-serif;font-size:.8rem">${r.check_in || '—'}</td>
-        <td style="color:var(--red);font-family:'Orbitron',sans-serif;font-size:.8rem">${r.check_out || '—'}</td>
-        <td style="color:var(--green);font-family:'Orbitron',sans-serif;font-size:.8rem">${r.check_in_2 || '—'}</td>
-        <td style="color:var(--blue);font-family:'Orbitron',sans-serif;font-size:.8rem">${r.check_out_2 || '—'}</td>
+        <td style="color:var(--green)">${t(r.check_in)}</td>
+        <td style="color:var(--red)">${t(r.check_out)}</td>
+        <td style="color:var(--green)">${t(r.check_in_2)}</td>
+        <td style="color:var(--red)">${t(r.check_out_3)}</td>
+        <td style="color:var(--green)">${t(r.check_in_3)}</td>
+        <td style="color:var(--blue)">${t(r.check_out_2)}</td>
         <td><span class="badge badge-present">${r.status}</span></td>
-        <td><span class="badge ${p===4?'badge-out':'badge-in'}">${p}/4</span></td>
+        <td><span class="badge ${p===6?'badge-out':'badge-in'}">${p}/6</span></td>
       </tr>`;
     }).join('');
 

@@ -181,68 +181,92 @@ def get_attendance_by_filters(start_date=None, end_date=None, employee_id=None) 
     return [d.to_dict() for d in docs]
 
 # ─────────────────────────────────────────────
-# Face Recognition helpers — LBP Histogram (v2)
+# Face Recognition — InsightFace ArcFace (v3)
+# ─────────────────────────────────────────────
+# Professional deep-learning pipeline:
+#   Camera → Detection → Alignment → ArcFace embedding → Cosine matching
+# Embeddings: 512-dim L2-normalised float32 vectors
+# Similarity: cosine similarity, threshold 0.45 (InsightFace scale)
+# Matching:   max(cosine_sim(new, stored_i) for stored_i in user_embeddings)
+# Auto-update: if score > AUTO_UPDATE_THRESHOLD, new embedding is added
+#              and profile is pruned to MAX_EMBEDDINGS_PER_USER
 # ─────────────────────────────────────────────
 
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+try:
+    from deepface import DeepFace as _DeepFace
+    import tensorflow as _tf
+    _tf.get_logger().setLevel("ERROR")   # silence TF INFO spam
+    # Warm-up: trigger model download/load at startup, not on first request
+    _DeepFace.build_model("ArcFace")
+    DEEPFACE_AVAILABLE = True
+    logger.info("DeepFace ArcFace model loaded successfully.")
+except Exception as _e:
+    DEEPFACE_AVAILABLE = False
+    logger.warning(f"DeepFace not available ({_e}). Falling back to LBP.")
 
-EMB_V2_SIZE = 512   # 4×4 grid × 32 bins = 512
-EMB_V1_SIZE = 16384  # legacy raw pixel (128×128)
+# For clarity everywhere below, alias the flag
+INSIGHTFACE_AVAILABLE = DEEPFACE_AVAILABLE
 
-def detect_faces(img_array: np.ndarray):
-    gray = cv2.cvtColor(img_array, cv2.COLOR_BGR2GRAY)
-    # CLAHE normalises illumination before detection
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    gray = clahe.apply(gray)
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(80, 80))
-    return faces, gray
+# ── Fallback: LBP cascade (used only when InsightFace is unavailable) ──
+_face_cascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+)
+LBP_EMB_SIZE  = 512
+LEGACY_EMB_SIZE = 16384
+
+# ── Thresholds ──
+ARCFACE_THRESHOLD     = 0.45   # cosine similarity (InsightFace ArcFace)
+ARCFACE_AUTO_UPDATE   = 0.55   # above this → save new embedding to profile
+LBP_THRESHOLD         = 0.78   # chi-square similarity (fallback LBP)
+LEGACY_THRESHOLD      = 0.90   # cosine similarity (v1 raw-pixel, legacy)
+MAX_EMBEDDINGS        = 20     # rolling cap per user
 
 
-def extract_face_embedding(gray: np.ndarray, face_rect) -> np.ndarray:
+# ── Quality score ──────────────────────────────────────────────────────
+
+def compute_quality_score(img_bgr: np.ndarray, face_box) -> float:
     """
-    Extract LBP (Local Binary Pattern) histogram features from a face.
-    Returns a 512-dim normalised float32 vector — far more discriminative
-    than raw pixel values and robust to lighting / minor pose changes.
+    Returns a quality score 0–1 for a detected face crop.
+    Rejects: blurry frames, tiny faces, very dark crops.
     """
-    x, y, w, h = face_rect
-    face_roi = gray[y:y+h, x:x+w]
-
-    # Resize to fixed 64×64
-    face_resized = cv2.resize(face_roi, (64, 64))
-
-    # CLAHE illumination normalisation on the crop
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    face_eq = clahe.apply(face_resized)
-
-    # LBP in a 4×4 grid of cells → 16 cells × 32 histogram bins = 512 features
-    GRID = 4
-    cell_h = face_eq.shape[0] // GRID
-    cell_w = face_eq.shape[1] // GRID
-    NEIGHBORS = [(-1,-1),(-1,0),(-1,1),(0,1),(1,1),(1,0),(1,-1),(0,-1)]
-    features = []
-
-    for gy in range(GRID):
-        for gx in range(GRID):
-            cell = face_eq[gy*cell_h:(gy+1)*cell_h, gx*cell_w:(gx+1)*cell_w].astype(np.int32)
-            lbp_map = np.zeros(cell.shape, dtype=np.uint8)
-            for bit_idx, (dy, dx) in enumerate(NEIGHBORS):
-                ys = np.clip(np.arange(cell_h) + dy, 0, cell_h - 1)
-                xs = np.clip(np.arange(cell_w) + dx, 0, cell_w - 1)
-                neighbor = cell[np.ix_(ys, xs)]
-                lbp_map |= ((cell >= neighbor).astype(np.uint8) << bit_idx)
-            hist, _ = np.histogram(lbp_map.flatten(), bins=32, range=(0, 256))
-            features.extend(hist.tolist())
-
-    feat = np.array(features, dtype=np.float32)
-    total = feat.sum()
-    return feat / total if total > 0 else feat
+    x, y, w, h = int(face_box[0]), int(face_box[1]), int(face_box[2]), int(face_box[3])
+    # Face too small
+    if w < 60 or h < 60:
+        return 0.0
+    crop = img_bgr[y:y+h, x:x+w]
+    if crop.size == 0:
+        return 0.0
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    # Blur: Laplacian variance (higher = sharper)
+    blur = cv2.Laplacian(gray, cv2.CV_64F).var()
+    blur_score = min(blur / 200.0, 1.0)           # normalise; 200 = good sharpness
+    # Brightness: reject very dark frames
+    brightness = gray.mean() / 255.0
+    bright_score = 1.0 if brightness > 0.2 else brightness / 0.2
+    return round(blur_score * 0.7 + bright_score * 0.3, 3)
 
 
-def chi_square_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    """
-    Chi-square similarity for histograms — the standard metric for LBP.
-    Returns a value in (0, 1]; 1.0 = identical histograms.
-    """
+# ── Embedding helpers ──────────────────────────────────────────────────
+
+def emb_to_str(emb: list) -> str:
+    return json.dumps([round(float(v), 6) for v in emb])
+
+def str_to_emb(s) -> np.ndarray:
+    if isinstance(s, str):
+        return np.array(json.loads(s), dtype=np.float32)
+    return np.array(s, dtype=np.float32)
+
+def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
+    """Cosine similarity between two L2-normalised vectors."""
+    a = np.asarray(a, dtype=np.float32)
+    b = np.asarray(b, dtype=np.float32)
+    na, nb = np.linalg.norm(a), np.linalg.norm(b)
+    if na == 0 or nb == 0:
+        return 0.0
+    return float(np.dot(a / na, b / nb))
+
+def chi_square_sim(a: np.ndarray, b: np.ndarray) -> float:
+    """Chi-square similarity for LBP histograms."""
     a = np.asarray(a, dtype=np.float32)
     b = np.asarray(b, dtype=np.float32)
     if len(a) != len(b):
@@ -254,75 +278,91 @@ def chi_square_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return 1.0 / (1.0 + chi2)
 
 
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    """Legacy cosine similarity for v1 raw-pixel embeddings."""
-    norm_a = np.linalg.norm(a)
-    norm_b = np.linalg.norm(b)
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return float(np.dot(a, b) / (norm_a * norm_b))
+# ── Primary: InsightFace ArcFace pipeline ─────────────────────────────
 
-
-def emb_to_str(emb: list) -> str:
-    return json.dumps(emb)
-
-
-def str_to_emb(s: str) -> np.ndarray:
-    return np.array(json.loads(s), dtype=np.float32)
-
-
-def compare_with_all_employees(embedding: np.ndarray):
+def arcface_process(img_bgr: np.ndarray):
     """
-    Compare a face embedding against all employees.
-    - v2 (LBP, 512-dim): chi-square similarity, threshold 0.78 (tighter = fewer false matches)
-    - v1 (raw pixel, 16384-dim): cosine similarity, threshold 0.90
-    Uses median of top-3 stored-sample scores per employee for robustness.
-    Returns (best_match_id, best_score, all_candidates)
+    Detect + align + embed all faces using DeepFace ArcFace.
+    Returns list of (embedding_512, quality_score, bbox_xywh).
+    bbox_xywh = (x, y, w, h) as integers.
     """
-    employees = get_all_employees()
-    best_match = None
-    best_score = 0.0
-    is_v2 = (len(embedding) == EMB_V2_SIZE)
+    if not INSIGHTFACE_AVAILABLE:
+        return []
+    try:
+        # CLAHE enhancement before detection
+        lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+        img_bgr = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
 
-    THRESHOLD_V2 = 0.78   # raised from 0.72 — reduces false positives
-    THRESHOLD_V1 = 0.90
-
-    all_candidates = []  # [(score, name, id)] for debugging
-
-    for emp in employees:
-        stored_embeddings = emp.get("embeddings", [])
-        scores_for_emp = []
-
-        for stored_emb in stored_embeddings:
-            emb_arr = str_to_emb(stored_emb) if isinstance(stored_emb, str) else np.array(stored_emb, dtype=np.float32)
-            stored_is_v2 = (len(emb_arr) == EMB_V2_SIZE)
-            if is_v2 != stored_is_v2:
+        # DeepFace.represent returns a list of dicts, one per detected face
+        # Each dict: {"embedding": [...], "facial_area": {"x","y","w","h"}, ...}
+        reps = _DeepFace.represent(
+            img_path=img_bgr,
+            model_name="ArcFace",
+            detector_backend="opencv",   # fast, same cascade we use
+            enforce_detection=False,     # return empty if no face rather than raise
+            align=True,
+        )
+        results = []
+        for rep in reps:
+            raw_emb = rep.get("embedding")
+            if raw_emb is None:
                 continue
-            score = chi_square_similarity(embedding, emb_arr) if is_v2 else cosine_similarity(embedding, emb_arr)
-            scores_for_emp.append(score)
+            emb = np.array(raw_emb, dtype=np.float32)
+            # L2-normalise to unit sphere
+            norm = np.linalg.norm(emb)
+            if norm > 0:
+                emb = emb / norm
+            fa = rep.get("facial_area", {})
+            x, y, w, h = fa.get("x", 0), fa.get("y", 0), fa.get("w", 64), fa.get("h", 64)
+            quality = compute_quality_score(img_bgr, (x, y, w, h))
+            results.append((emb, quality, (x, y, w, h)))   # bbox as xywh tuple
+        return results
+    except Exception as e:
+        logger.warning(f"arcface_process error: {e}")
+        return []
 
-        if scores_for_emp:
-            top3 = sorted(scores_for_emp, reverse=True)[:3]
-            # Use median of top-3 for stability (less affected by one outlier)
-            med = sorted(top3)[len(top3) // 2]
-            all_candidates.append((med, emp.get("name", ""), emp.get("id", "")))
-            if med > best_score:
-                best_score = med
-                best_match = emp.get("id")
 
-    all_candidates.sort(reverse=True)
-    threshold = THRESHOLD_V2 if is_v2 else THRESHOLD_V1
+# ── Fallback: LBP histogram pipeline ──────────────────────────────────
 
-    # Extra safety: if top-2 scores are very close (< 5% gap), reject — ambiguous face
-    if len(all_candidates) >= 2:
-        gap = all_candidates[0][0] - all_candidates[1][0]
-        if best_score >= threshold and gap < 0.04:
-            logger.warning(f"Ambiguous match: {all_candidates[0][1]}({all_candidates[0][0]:.3f}) vs {all_candidates[1][1]}({all_candidates[1][0]:.3f}), gap={gap:.3f}")
-            return None, best_score, all_candidates[:3]
+def _lbp_detect(img_bgr: np.ndarray):
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray = clahe.apply(gray)
+    faces = _face_cascade.detectMultiScale(
+        gray, scaleFactor=1.1, minNeighbors=6, minSize=(80, 80)
+    )
+    return faces, gray
 
-    if best_score >= threshold:
-        return best_match, best_score, all_candidates[:3]
-    return None, best_score, all_candidates[:3]
+def _lbp_embed(gray: np.ndarray, face_rect) -> np.ndarray:
+    x, y, w, h = face_rect
+    face_resized = cv2.resize(gray[y:y+h, x:x+w], (64, 64))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    face_eq = clahe.apply(face_resized)
+    GRID = 4
+    cell_h = face_eq.shape[0] // GRID
+    cell_w = face_eq.shape[1] // GRID
+    NEIGHBORS = [(-1,-1),(-1,0),(-1,1),(0,1),(1,1),(1,0),(1,-1),(0,-1)]
+    features = []
+    for gy in range(GRID):
+        for gx in range(GRID):
+            cell = face_eq[gy*cell_h:(gy+1)*cell_h, gx*cell_w:(gx+1)*cell_w].astype(np.int32)
+            lbp_map = np.zeros(cell.shape, dtype=np.uint8)
+            for bit_idx, (dy, dx) in enumerate(NEIGHBORS):
+                ys = np.clip(np.arange(cell_h) + dy, 0, cell_h - 1)
+                xs = np.clip(np.arange(cell_w) + dx, 0, cell_w - 1)
+                neighbor = cell[np.ix_(ys, xs)]
+                lbp_map |= ((cell >= neighbor).astype(np.uint8) << bit_idx)
+            hist, _ = np.histogram(lbp_map.flatten(), bins=32, range=(0, 256))
+            features.extend(hist.tolist())
+    feat = np.array(features, dtype=np.float32)
+    total = feat.sum()
+    return feat / total if total > 0 else feat
+
+
+# ── Unified decode helper ──────────────────────────────────────────────
 
 def decode_base64_image(b64_str: str) -> np.ndarray:
     if "," in b64_str:
@@ -331,7 +371,98 @@ def decode_base64_image(b64_str: str) -> np.ndarray:
     img_array = np.frombuffer(img_bytes, dtype=np.uint8)
     return cv2.imdecode(img_array, cv2.IMREAD_COLOR)
 
+
+# ── Core matching ──────────────────────────────────────────────────────
+
+def _is_arcface_emb(arr: np.ndarray) -> bool:
+    return len(arr) == 512 and (abs(np.linalg.norm(arr) - 1.0) < 0.05)
+
+def compare_with_all_employees(embedding: np.ndarray, use_arcface: bool = False):
+    """
+    Match embedding against every employee's stored embeddings.
+
+    Strategy (per employee):
+      score = max(similarity(new_emb, stored_i) for stored_i in stored_embeddings)
+
+    This is the recommended professional approach — best-sample wins.
+    Ambiguity guard: reject if gap between top-2 employees < 0.04.
+
+    Returns (matched_employee_id | None, best_score, top_candidates)
+    """
+    employees = get_all_employees()
+    best_match_id   = None
+    best_score      = 0.0
+    all_candidates  = []   # [(score, name, id)]
+
+    for emp in employees:
+        stored_list = emp.get("embeddings", [])
+        if not stored_list:
+            continue
+
+        emp_best = 0.0
+        for raw in stored_list:
+            stored = str_to_emb(raw)
+            if use_arcface and _is_arcface_emb(stored):
+                score = cosine_sim(embedding, stored)
+            elif not use_arcface and len(stored) == LBP_EMB_SIZE:
+                score = chi_square_sim(embedding, stored)
+            elif not use_arcface and len(stored) == LEGACY_EMB_SIZE:
+                score = cosine_sim(embedding, stored)
+            else:
+                continue
+            if score > emp_best:
+                emp_best = score
+
+        if emp_best > 0:
+            all_candidates.append((emp_best, emp.get("name", ""), emp.get("id", "")))
+            if emp_best > best_score:
+                best_score    = emp_best
+                best_match_id = emp.get("id")
+
+    all_candidates.sort(reverse=True)
+
+    threshold = ARCFACE_THRESHOLD if use_arcface else LBP_THRESHOLD
+
+    # Ambiguity guard
+    if len(all_candidates) >= 2:
+        gap = all_candidates[0][0] - all_candidates[1][0]
+        if best_score >= threshold and gap < 0.04:
+            logger.warning(
+                f"Ambiguous: {all_candidates[0][1]}={all_candidates[0][0]:.3f} "
+                f"vs {all_candidates[1][1]}={all_candidates[1][0]:.3f}, gap={gap:.3f}"
+            )
+            return None, best_score, all_candidates[:3]
+
+    if best_score >= threshold:
+        return best_match_id, best_score, all_candidates[:3]
+    return None, best_score, all_candidates[:3]
+
+
+def auto_update_face_profile(employee_id: str, new_emb: np.ndarray, score: float):
+    """
+    If score > ARCFACE_AUTO_UPDATE, add the new embedding to the employee's
+    rolling profile (max MAX_EMBEDDINGS). Oldest embeddings are pruned first.
+    This prevents the need for manual re-registration.
+    """
+    if score < ARCFACE_AUTO_UPDATE:
+        return
+    emp = get_employee(employee_id)
+    if not emp:
+        return
+    stored = list(emp.get("embeddings", []))
+    stored.append(emb_to_str(new_emb.tolist()))
+    # Prune: keep the most recent MAX_EMBEDDINGS
+    if len(stored) > MAX_EMBEDDINGS:
+        stored = stored[-MAX_EMBEDDINGS:]
+    update_employee_fields(employee_id, {
+        "embeddings": stored,
+        "profile_updated_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+    })
+    logger.info(f"Auto-updated face profile for {employee_id} (score={score:.3f}, total={len(stored)})")
+
+
 # ─────────────────────────────────────────────
+
 # Pydantic Models
 # ─────────────────────────────────────────────
 
@@ -478,31 +609,54 @@ async def register_employee(req: RegisterRequest):
 
     embeddings = []
     face_images_saved = []
+    rejected = 0
 
     for i, b64_img in enumerate(req.images):
         try:
             img = decode_base64_image(b64_img)
             if img is None:
                 continue
-            faces, gray = detect_faces(img)
-            if len(faces) == 0:
-                continue
-            largest_face = max(faces, key=lambda f: f[2] * f[3])
-            emb = extract_face_embedding(gray, largest_face)
-            embeddings.append(emb_to_str(emb.tolist()))  # store as JSON string
 
-            face_path = FACES_DIR / f"{req.employee_id}_{i}.jpg"
-            x, y, w, h = largest_face
-            face_img = img[y:y+h, x:x+w]
-            cv2.imwrite(str(face_path), face_img)
-            face_images_saved.append(str(face_path))
+            if INSIGHTFACE_AVAILABLE:
+                # ── ArcFace path ──
+                faces = arcface_process(img)
+                for emb, quality, bbox in faces:
+                    if quality < 0.15:
+                        rejected += 1
+                        logger.info(f"Reg image {i}: rejected low quality ({quality:.2f})")
+                        continue
+                    embeddings.append(emb_to_str(emb.tolist()))
+                    x,y,w,h = bbox
+                    face_crop = img[y:y+h, x:x+w]
+                    face_path = FACES_DIR / f"{req.employee_id}_{i}.jpg"
+                    cv2.imwrite(str(face_path), face_crop)
+                    face_images_saved.append(str(face_path))
+                    break  # one face per photo
+            else:
+                # ── LBP fallback ──
+                faces, gray = _lbp_detect(img)
+                if len(faces) == 0:
+                    continue
+                largest = max(faces, key=lambda f: f[2]*f[3])
+                emb = _lbp_embed(gray, largest)
+                embeddings.append(emb_to_str(emb.tolist()))
+                x,y,w,h = largest
+                face_path = FACES_DIR / f"{req.employee_id}_{i}.jpg"
+                cv2.imwrite(str(face_path), img[y:y+h, x:x+w])
+                face_images_saved.append(str(face_path))
+
         except Exception as e:
             logger.error(f"Error processing image {i}: {e}")
             continue
 
     if len(embeddings) < 1:
-        raise HTTPException(status_code=400, detail="No valid face detected. Please retake photos with good lighting.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"No valid face detected ({rejected} rejected for low quality). "
+                   "Please retake photos in good lighting, facing the camera."
+        )
 
+    method = "ArcFace" if INSIGHTFACE_AVAILABLE else "LBP"
     emp_data = {
         "id": req.employee_id,
         "name": req.name,
@@ -520,13 +674,14 @@ async def register_employee(req: RegisterRequest):
         "password": hash_password(req.password),
         "embeddings": embeddings,
         "face_images": face_images_saved,
+        "embedding_method": method,
         "registered_at": datetime.now().isoformat(),
         "active": True
     }
     set_employee(req.employee_id, emp_data)
     return {
         "success": True,
-        "message": f"Employee {req.name} registered with {len(embeddings)} face samples",
+        "message": f"Employee {req.name} registered with {len(embeddings)} {method} face embeddings",
         "employee_id": req.employee_id,
         "portal_password": req.password
     }
@@ -586,8 +741,9 @@ class ReregisterFaceRequest(BaseModel):
 @app.post("/api/employees/{employee_id}/reregister-face")
 async def reregister_face(employee_id: str, req: ReregisterFaceRequest):
     """
-    Re-process face photos for an existing employee using the new LBP algorithm.
-    Replaces old v1 (raw pixel) embeddings with new v2 (LBP histogram) ones.
+    Re-process face photos for an existing employee.
+    Uses ArcFace when available, otherwise LBP fallback.
+    Completely replaces the stored embedding profile.
     """
     emp = get_employee(employee_id)
     if not emp:
@@ -595,46 +751,65 @@ async def reregister_face(employee_id: str, req: ReregisterFaceRequest):
 
     embeddings = []
     face_images_saved = []
+    rejected = 0
 
     for i, b64_img in enumerate(req.images):
         try:
             img = decode_base64_image(b64_img)
             if img is None:
                 continue
-            faces, gray = detect_faces(img)
-            if len(faces) == 0:
-                continue
-            largest_face = max(faces, key=lambda f: f[2] * f[3])
-            emb = extract_face_embedding(gray, largest_face)
-            embeddings.append(emb_to_str(emb.tolist()))
 
-            face_path = FACES_DIR / f"{employee_id}_{i}.jpg"
-            x, y, w, h = largest_face
-            face_img = img[y:y+h, x:x+w]
-            cv2.imwrite(str(face_path), face_img)
-            face_images_saved.append(str(face_path))
+            if INSIGHTFACE_AVAILABLE:
+                faces = arcface_process(img)
+                for emb, quality, bbox in faces:
+                    if quality < 0.15:
+                        rejected += 1
+                        continue
+                    embeddings.append(emb_to_str(emb.tolist()))
+                    x,y,w,h = bbox
+                    face_path = FACES_DIR / f"{employee_id}_{i}.jpg"
+                    cv2.imwrite(str(face_path), img[y:y+h, x:x+w])
+                    face_images_saved.append(str(face_path))
+                    break
+            else:
+                faces, gray = _lbp_detect(img)
+                if len(faces) == 0:
+                    continue
+                largest = max(faces, key=lambda f: f[2]*f[3])
+                emb = _lbp_embed(gray, largest)
+                embeddings.append(emb_to_str(emb.tolist()))
+                x,y,w,h = largest
+                face_path = FACES_DIR / f"{employee_id}_{i}.jpg"
+                cv2.imwrite(str(face_path), img[y:y+h, x:x+w])
+                face_images_saved.append(str(face_path))
+
         except Exception as e:
             logger.error(f"Re-register image {i} error: {e}")
             continue
 
     if len(embeddings) < 1:
-        raise HTTPException(status_code=400, detail="No valid face detected in provided photos. Please retake with good lighting.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"No valid face detected ({rejected} rejected for quality). Retake in better lighting."
+        )
 
+    method = "ArcFace" if INSIGHTFACE_AVAILABLE else "LBP"
     update_employee_fields(employee_id, {
         "embeddings": embeddings,
         "face_images": face_images_saved,
+        "embedding_method": method,
         "reregistered_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
     })
-
     return {
         "success": True,
-        "message": f"Face data updated for {emp['name']} with {len(embeddings)} new LBP samples",
+        "message": f"Face data updated for {emp['name']} — {len(embeddings)} {method} embeddings stored",
         "employee_id": employee_id,
-        "samples": len(embeddings)
+        "samples": len(embeddings),
+        "method": method
     }
 
 # ─────────────────────────────────────────────
-# Face Scanning / Attendance (4-punch system)
+# Face Scanning / Attendance (6-punch system)
 # ─────────────────────────────────────────────
 
 @app.post("/api/attendance/scan")
@@ -644,73 +819,102 @@ async def scan_face(req: ScanRequest):
         if img is None:
             raise HTTPException(status_code=400, detail="Invalid image data")
 
-        faces, gray = detect_faces(img)
-        if len(faces) == 0:
-            return {"success": False, "message": "No face detected. Please position your face in the camera.", "detected": False}
-
-        IST = timezone(timedelta(hours=5, minutes=30))
+        IST   = timezone(timedelta(hours=5, minutes=30))
         now   = datetime.now(IST)
         today = now.strftime("%Y-%m-%d")
         t     = now.strftime("%H:%M:%S")
-
         results = []
-        for face_rect in faces:
-            emb = extract_face_embedding(gray, face_rect)
-            matched_id, score, candidates = compare_with_all_employees(emb)
-            conf = round(score * 100, 1)
 
-            if matched_id:
-                emp = get_employee(matched_id)
-                today_recs = get_employee_today_records(matched_id, today)
-                today_recs.sort(key=lambda r: r.get("timestamp", ""))
+        if INSIGHTFACE_AVAILABLE:
+            # ══ ArcFace path ══
+            arc_faces = arcface_process(img)
+            if not arc_faces:
+                return {"success": False, "message": "No face detected. Please position your face in the camera.", "detected": False}
 
-                if not today_recs:
-                    rec_id = str(uuid.uuid4())
-                    record = {
-                        "id":          rec_id,
-                        "employee_id": matched_id,
-                        "name":        emp["name"],
-                        "department":  emp["department"],
-                        "date":        today,
-                        "check_in":    t,
-                        "check_out":   None,
-                        "check_in_2":  None,
-                        "check_out_2": None,
-                        "status":      "present",
-                        "confidence":  conf,
-                        "timestamp":   now.isoformat()
-                    }
-                    set_attendance_record(rec_id, record)
-                    results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in",      "punch": 1, "time": t, "confidence": conf})
+            for emb, quality, bbox in arc_faces:
+                if quality < 0.10:
+                    results.append({"action": "low_quality", "message": "Image too blurry or dark — please improve lighting.", "confidence": 0})
+                    continue
 
-                else:
-                    rec = today_recs[-1]
-                    rec_id = rec["id"]
+                matched_id, score, candidates = compare_with_all_employees(emb, use_arcface=True)
+                # Display confidence as 0-100%, scaled from ArcFace cosine range (0.3-0.7 typical)
+                conf = round(min(score / ARCFACE_THRESHOLD, 1.0) * 100, 1)
 
-                    if rec.get("check_out") is None:
-                        update_attendance_record(rec_id, {"check_out": t})
-                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out",    "punch": 2, "time": t, "confidence": conf})
+                if matched_id:
+                    emp = get_employee(matched_id)
+                    today_recs = get_employee_today_records(matched_id, today)
+                    today_recs.sort(key=lambda r: r.get("timestamp", ""))
 
-                    elif rec.get("check_in_2") is None:
-                        update_attendance_record(rec_id, {"check_in_2": t})
-                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2",   "punch": 3, "time": t, "confidence": conf})
+                    # Auto-update rolling face profile
+                    auto_update_face_profile(matched_id, emb, score)
 
-                    elif rec.get("check_out_2") is None:
-                        update_attendance_record(rec_id, {"check_out_2": t})
-                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2",  "punch": 4, "time": t, "confidence": conf})
-
+                    # Record punch
+                    if not today_recs:
+                        rec_id = str(uuid.uuid4())
+                        set_attendance_record(rec_id, {
+                            "id": rec_id, "employee_id": matched_id, "name": emp["name"],
+                            "department": emp["department"], "date": today,
+                            "check_in": t, "check_out": None, "check_in_2": None,
+                            "check_out_3": None, "check_in_3": None, "check_out_2": None,
+                            "status": "present", "confidence": conf, "timestamp": now.isoformat()
+                        })
+                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in", "punch": 1, "time": t, "confidence": conf})
                     else:
-                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 4 attendance punches complete for today", "confidence": conf})
-            else:
-                top = candidates[0] if candidates else None
-                results.append({
-                    "employee_id": None,
-                    "action":      "unknown",
-                    "confidence":  conf,
-                    "message":     f"Face not recognized (best match: {top[1] if top else 'none'} at {round(top[0]*100,1) if top else 0}% — need ≥78%)"
-                })
+                        rec = today_recs[-1]
+                        rid = rec["id"]
+                        if   rec.get("check_out")  is None: update_attendance_record(rid, {"check_out":  t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out",  "punch": 2, "time": t, "confidence": conf})
+                        elif rec.get("check_in_2") is None: update_attendance_record(rid, {"check_in_2": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2", "punch": 3, "time": t, "confidence": conf})
+                        elif rec.get("check_out_3")is None: update_attendance_record(rid, {"check_out_3":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_3","punch": 4, "time": t, "confidence": conf})
+                        elif rec.get("check_in_3") is None: update_attendance_record(rid, {"check_in_3": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_3", "punch": 5, "time": t, "confidence": conf})
+                        elif rec.get("check_out_2")is None: update_attendance_record(rid, {"check_out_2":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2","punch": 6, "time": t, "confidence": conf})
+                        else: results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 6 punches complete for today", "confidence": conf})
+                else:
+                    top = candidates[0] if candidates else None
+                    results.append({"employee_id": None, "action": "unknown", "confidence": conf,
+                                    "message": f"Face not recognized (best: {top[1] if top else 'none'} @ {round(top[0],3) if top else 0} — need ≥{ARCFACE_THRESHOLD})"})
+                break  # process only the largest/first face per scan
 
-        return {"success": True, "detected": True, "results": results, "face_count": len(faces)}
+        else:
+            # ══ LBP fallback path ══
+            faces, gray = _lbp_detect(img)
+            if len(faces) == 0:
+                return {"success": False, "message": "No face detected. Please position your face in the camera.", "detected": False}
+
+            for face_rect in faces:
+                emb = _lbp_embed(gray, face_rect)
+                matched_id, score, candidates = compare_with_all_employees(emb, use_arcface=False)
+                conf = round(score * 100, 1)
+
+                if matched_id:
+                    emp = get_employee(matched_id)
+                    today_recs = get_employee_today_records(matched_id, today)
+                    today_recs.sort(key=lambda r: r.get("timestamp", ""))
+
+                    if not today_recs:
+                        rec_id = str(uuid.uuid4())
+                        set_attendance_record(rec_id, {
+                            "id": rec_id, "employee_id": matched_id, "name": emp["name"],
+                            "department": emp["department"], "date": today,
+                            "check_in": t, "check_out": None, "check_in_2": None,
+                            "check_out_3": None, "check_in_3": None, "check_out_2": None,
+                            "status": "present", "confidence": conf, "timestamp": now.isoformat()
+                        })
+                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in", "punch": 1, "time": t, "confidence": conf})
+                    else:
+                        rec = today_recs[-1]
+                        rid = rec["id"]
+                        if   rec.get("check_out")  is None: update_attendance_record(rid, {"check_out":  t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out",  "punch": 2, "time": t, "confidence": conf})
+                        elif rec.get("check_in_2") is None: update_attendance_record(rid, {"check_in_2": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2", "punch": 3, "time": t, "confidence": conf})
+                        elif rec.get("check_out_3")is None: update_attendance_record(rid, {"check_out_3":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_3","punch": 4, "time": t, "confidence": conf})
+                        elif rec.get("check_in_3") is None: update_attendance_record(rid, {"check_in_3": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_3", "punch": 5, "time": t, "confidence": conf})
+                        elif rec.get("check_out_2")is None: update_attendance_record(rid, {"check_out_2":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2","punch": 6, "time": t, "confidence": conf})
+                        else: results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 6 punches complete for today", "confidence": conf})
+                else:
+                    top = candidates[0] if candidates else None
+                    results.append({"employee_id": None, "action": "unknown", "confidence": conf,
+                                    "message": f"Face not recognized (best: {top[1] if top else 'none'} @ {round(top[0]*100,1) if top else 0}% — need ≥{round(LBP_THRESHOLD*100)}%)"})
+
+        return {"success": True, "detected": True, "results": results, "face_count": 1}
 
     except Exception as e:
         logger.error(f"Scan error: {e}")
@@ -733,19 +937,21 @@ async def manual_attendance(req: ManualAttendanceRequest):
             raise HTTPException(status_code=400, detail="Already checked in today")
         rec_id = str(uuid.uuid4())
         record = {
-            "id":          rec_id,
-            "employee_id": req.employee_id,
-            "name":        emp["name"],
-            "department":  emp["department"],
-            "date":        target_date,
-            "check_in":    now.strftime("%H:%M:%S"),
-            "check_out":   None,
-            "check_in_2":  None,
-            "check_out_2": None,
-            "status":      "present",
-            "confidence":  100.0,
-            "manual":      True,
-            "timestamp":   now.isoformat()
+            "id":           rec_id,
+            "employee_id":  req.employee_id,
+            "name":         emp["name"],
+            "department":   emp["department"],
+            "date":         target_date,
+            "check_in":     now.strftime("%H:%M:%S"),
+            "check_out":    None,
+            "check_in_2":   None,
+            "check_out_3":  None,
+            "check_in_3":   None,
+            "check_out_2":  None,
+            "status":       "present",
+            "confidence":   100.0,
+            "manual":       True,
+            "timestamp":    now.isoformat()
         }
         set_attendance_record(rec_id, record)
     elif req.type == "check_out":
@@ -845,6 +1051,8 @@ async def get_dashboard_stats():
                 "check_in":    r.get("check_in") or "—",
                 "check_out":   r.get("check_out"),
                 "check_in_2":  r.get("check_in_2"),
+                "check_out_3": r.get("check_out_3"),
+                "check_in_3":  r.get("check_in_3"),
                 "check_out_2": r.get("check_out_2"),
                 "status":      r.get("status", "present"),
                 "confidence":  r.get("confidence", 0),
@@ -986,10 +1194,12 @@ async def backup_daily(target_date: Optional[str] = None):
             "phone":          emp.get("phone", ""),
             "shift_start":    emp.get("shift_start", ""),
             "shift_end":      emp.get("shift_end", ""),
-            "clock_in":       r.get("check_in", ""),
-            "lunch_out":      r.get("check_out", ""),
-            "lunch_in":       r.get("check_in_2", ""),
-            "clock_out":      r.get("check_out_2", ""),
+            "clock_in":      r.get("check_in", ""),
+            "lunch_out":     r.get("check_out", ""),
+            "lunch_in":      r.get("check_in_2", ""),
+            "break_out":     r.get("check_out_3", ""),
+            "break_in":      r.get("check_in_3", ""),
+            "clock_out":     r.get("check_out_2", ""),
             "status":         r.get("status", "present"),
             "confidence":     r.get("confidence", ""),
             "manual":         r.get("manual", False),

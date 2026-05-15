@@ -171,8 +171,8 @@
                 <div class="kiosk-inst-item">
                   <div class="kiosk-inst-num">4</div>
                   <div>
-                    <div class="kiosk-inst-head">Press Scan or use Auto mode</div>
-                    <div class="kiosk-inst-sub">Auto scans every 3 seconds</div>
+                    <div class="kiosk-inst-head">Press Scan for each punch</div>
+                    <div class="kiosk-inst-sub">6 scans per day: In → Lunch Out → Lunch In → Break Out → Break In → Day Out</div>
                   </div>
                 </div>
               </div>
@@ -675,9 +675,11 @@
                   <th>Employee</th>
                   <th>Department</th>
                   <th>Date</th>
-                  <th>🟢 IN (AM)</th>
+                  <th>🟢 IN (Morning)</th>
                   <th>🔴 OUT (Lunch)</th>
-                  <th>🟢 IN (PM)</th>
+                  <th>🟢 IN (Lunch)</th>
+                  <th>🔴 OUT (Break)</th>
+                  <th>🟢 IN (Break)</th>
                   <th>🔴 OUT (Day)</th>
                   <th>Status</th>
                   <th>Punches</th>
@@ -888,84 +890,7 @@
                 </a>
               </div>
 
-              <!-- Recipient Email (for email option) -->
-              <div class="form-row" style="margin-bottom:14px">
-                <div class="form-group" style="flex:1">
-                  <label class="form-label">📨 Backup Recipient Email (optional)</label>
-                  <div class="input-wrap">
-                    <span class="input-icon">@</span>
-                    <input type="email" id="backup-email-input" class="form-input" placeholder="e.g. admin@company.com" />
-                  </div>
-                </div>
-                <div class="form-group" style="display:flex;align-items:flex-end">
-                  <button class="btn-secondary" onclick="saveBackupEmail()" style="min-height:46px;white-space:nowrap">
-                    💾 Save Email
-                  </button>
-                </div>
-              </div>
-              <p id="backup-email-status" class="reg-status hidden" style="margin-top:0;margin-bottom:14px"></p>
 
-              <!-- Send via Email (secondary) -->
-              <button id="send-backup-btn" class="btn-secondary" onclick="sendEmailBackup()" style="width:100%;min-height:44px;font-size:.9rem">
-                <span id="send-backup-text">📤 Send Backup via Email</span>
-              </button>
-              <!-- Test Email -->
-              <button id="test-email-btn" class="btn-secondary" onclick="sendTestEmail()" style="width:100%;min-height:36px;margin-top:6px;font-size:.8rem;opacity:.75">
-                <span id="test-email-text">🔍 Send Test Email (diagnose issues)</span>
-
-              </button>
-              <p id="send-backup-status" class="reg-status hidden" style="margin-top:12px"></p>
-
-
-              <!-- SMTP Setup -->
-              <div style="margin-top:16px;padding:16px;background:rgba(14,165,233,0.06);border:1px solid rgba(14,165,233,0.2);border-radius:12px">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-                  <span style="font-size:.85rem;font-weight:700;color:var(--cyan)">⚙️ Email Setup</span>
-                  <span id="smtp-configured-badge" style="font-size:.72rem;padding:3px 10px;border-radius:20px;background:rgba(244,63,94,0.15);color:#f43f5e;border:1px solid rgba(244,63,94,0.3)">● Not Configured</span>
-                </div>
-
-                <!-- Resend (recommended) -->
-                <div style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);border-radius:10px;padding:12px;margin-bottom:12px">
-                  <div style="font-size:.82rem;font-weight:700;color:var(--blue2);margin-bottom:4px">⚡ Recommended: Resend API (Free · Always works on cloud)</div>
-                  <p style="font-size:.74rem;color:var(--text2);margin-bottom:10px">
-                    SMTP is blocked on Render. Use <strong>Resend</strong> instead — free 100 emails/day, works instantly.
-                    <a href="https://resend.com" target="_blank" style="color:var(--cyan);text-decoration:none">Sign up at resend.com →</a>
-                  </p>
-                  <div class="input-wrap">
-                    <span class="input-icon">🔑</span>
-                    <input type="password" id="resend-key-input" class="form-input" placeholder="re_xxxxxxxxxxxxxxxxxxxx  (from resend.com dashboard)" />
-                  </div>
-                </div>
-
-                <!-- Gmail SMTP (fallback) -->
-                <p style="font-size:.76rem;color:var(--text2);margin-bottom:10px">
-                  <strong style="color:var(--text)">Or use Gmail SMTP</strong> (may be blocked by cloud servers)
-                  — <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--cyan);text-decoration:none">Get Gmail App Password →</a>
-                </p>
-                <div class="form-row" style="margin-bottom:10px">
-                  <div class="form-group">
-                    <label class="form-label" style="font-size:.78rem">📧 Gmail Address (Sender)</label>
-                    <div class="input-wrap">
-                      <span class="input-icon">@</span>
-                      <input type="email" id="smtp-user-input" class="form-input" placeholder="yourname@gmail.com" />
-                    </div>
-                  </div>
-                  <div class="form-group">
-                    <label class="form-label" style="font-size:.78rem">🔑 Gmail App Password</label>
-                    <div class="input-wrap">
-                      <span class="input-icon">🔐</span>
-                      <input type="password" id="smtp-pass-input" class="form-input" placeholder="xxxx xxxx xxxx xxxx" />
-                    </div>
-                  </div>
-                </div>
-                <button class="btn-secondary" onclick="saveSmtpSettings()" style="width:100%;min-height:42px">
-                  💾 Save Email Settings
-                </button>
-                <p id="smtp-save-status" class="reg-status hidden" style="margin-top:10px;font-size:.8rem"></p>
-                <div style="margin-top:12px;font-size:.73rem;color:var(--text2);padding:8px;background:rgba(0,0,0,0.2);border-radius:8px">
-                  ℹ️ The backup CSV includes: <strong>Date, Name, ID, Department, Clock In, Lunch Out, Lunch In, Clock Out, Status, Punches</strong> for all records.
-                </div>
-              </div>
             </div>
 
 
