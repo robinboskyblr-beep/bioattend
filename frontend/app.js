@@ -796,6 +796,7 @@ function showKioskPopup(d) {
   let msgText = 'Face not matched';
   let isSuccess = false;
   let isRescan = false;
+  let isTimeBlocked = false;
 
   if (d.success && d.detected && d.results && d.results.length > 0) {
     const res = d.results[0];
@@ -820,6 +821,12 @@ function showKioskPopup(d) {
       isRescan = true;
       playBeep('error');
       setKioskStatus('error', 'Low confidence — please reposition');
+    } else if (res.action === 'time_blocked') {
+      // Punch blocked due to shift/lunch/break timing
+      msgText = res.message || '⏰ Not the correct time for this action';
+      isTimeBlocked = true;
+      playBeep('error');
+      setKioskStatus('error', 'Time restriction active');
     } else if (res.action === 'already_complete') {
       msgText = `${res.name} — All punches complete for today ✅`;
       isSuccess = true;
@@ -847,6 +854,15 @@ function showKioskPopup(d) {
     name.style.textShadow     = '';
     action.textContent        = msgText;
     action.className          = 'kiosk-popup-action in';
+    timeEl.textContent        = '';
+    conf.textContent          = '';
+  } else if (isTimeBlocked) {
+    card.classList.add('time-blocked');
+    avatar.textContent        = '⏰';
+    greet.textContent         = '';
+    name.textContent          = '';
+    action.textContent        = msgText;
+    action.className          = 'kiosk-popup-action time-blocked';
     timeEl.textContent        = '';
     conf.textContent          = '';
   } else if (isRescan) {

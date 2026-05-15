@@ -831,6 +831,12 @@ canvas{max-height:220px}
 .kiosk-popup-progress{height:100%;width:100%;border-radius:2px;background:linear-gradient(90deg,var(--cyan),var(--blue2))}
 .kiosk-popup-card.check-out .kiosk-popup-progress{background:linear-gradient(90deg,var(--blue2),var(--blue-dark))}
 .kiosk-popup-card.fail .kiosk-popup-progress{background:linear-gradient(90deg,var(--red),#9f1239)}
+.kiosk-popup-card.time-blocked{border-color:rgba(245,158,11,0.5);box-shadow:0 32px 80px rgba(0,0,0,0.7),0 0 60px rgba(245,158,11,0.12)}
+.kiosk-popup-card.time-blocked .kiosk-popup-avatar{background:linear-gradient(135deg,#f59e0b,#b45309);box-shadow:0 0 24px rgba(245,158,11,0.35)}
+.kiosk-popup-card.time-blocked .kiosk-popup-progress{background:linear-gradient(90deg,#f59e0b,#b45309)}
+.kiosk-popup-action.time-blocked{color:#f59e0b}
+.kiosk-popup-card.rescan{border-color:rgba(14,165,233,0.4);box-shadow:0 32px 80px rgba(0,0,0,0.7),0 0 60px rgba(14,165,233,0.1)}
+.kiosk-popup-action.rescan{color:var(--blue)}
 
 @media(max-width:900px){
   .kiosk-main{grid-template-columns:1fr;padding:16px}

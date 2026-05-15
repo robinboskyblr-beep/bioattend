@@ -256,9 +256,119 @@ MP_AUTO_UPDATE        = 0.86   # auto-update threshold for MP embeddings
 LBP_THRESHOLD         = 0.65   # chi-square similarity (LBP fallback — lower = more lenient)
 LEGACY_THRESHOLD      = 0.90   # cosine similarity (v1 raw-pixel, legacy)
 MAX_EMBEDDINGS        = 20     # rolling cap per user
+PUNCH_EARLY_GRACE     = 2      # minutes before scheduled time a punch is allowed
 
 
-# ── Quality score ──────────────────────────────────────────────────────
+# ── Punch Sequence & Timing Validation ──────────────────────────────────
+
+# Maps each punch field to (action_name, punch_number)
+_PUNCH_SEQUENCE = [
+    ("check_out",  "check_out",  2),   # Lunch Out
+    ("check_in_2", "check_in_2", 3),   # Lunch In
+    ("check_out_3","check_out_3",4),   # Break Out
+    ("check_in_3", "check_in_3", 5),   # Break In
+    ("check_out_2","check_out_2",6),   # Clock Out
+]
+
+def _next_punch(today_recs: list) -> tuple:
+    """
+    Inspect today's record and return (field, action, punch_number).
+    field=None means Clock In (no record yet).
+    """
+    if not today_recs:
+        return None, "check_in", 1
+    rec = today_recs[-1]
+    for field, action, num in _PUNCH_SEQUENCE:
+        if rec.get(field) is None:
+            return field, action, num
+    return None, "already_complete", 0
+
+
+def _validate_punch_time(emp: dict, action: str, hhmm: str) -> tuple:
+    """
+    Returns (allowed: bool, message: str).
+    Blocks a punch if attempted too early relative to the employee's schedule.
+    hhmm: current time as "HH:MM" or "HH:MM:SS"
+    """
+    def to_mins(t: str) -> int:
+        p = t.split(":")
+        return int(p[0]) * 60 + int(p[1])
+
+    now   = to_mins(hhmm)
+    grace = PUNCH_EARLY_GRACE
+
+    ls = emp.get("lunch_break_start", "13:00")
+    bs = emp.get("break_start",       "16:30")
+    se = emp.get("shift_end",         "18:00")
+
+    rules = {
+        "check_in":    (None,
+                        ""),
+        "check_out":   (to_mins(ls) - grace,
+                        f"⏰ Lunch Out is not allowed yet. "
+                        f"Your lunch break starts at {ls}. Please wait."),
+        "check_in_2":  (to_mins(ls),
+                        f"⏰ Lunch hasn't started yet. "
+                        f"Your lunch break starts at {ls}."),
+        "check_out_3": (to_mins(bs) - grace,
+                        f"⏰ Break Out is not allowed yet. "
+                        f"Your break starts at {bs}. Please wait."),
+        "check_in_3":  (to_mins(bs),
+                        f"⏰ Break hasn't started yet. "
+                        f"Your break starts at {bs}."),
+        "check_out_2": (to_mins(se) - grace,
+                        f"⏰ Clock Out is not allowed yet. "
+                        f"Your shift ends at {se}. Please wait."),
+    }
+    min_t, msg = rules.get(action, (None, ""))
+    if min_t is not None and now < min_t:
+        return False, msg
+    return True, ""
+
+
+def _record_punch(emp: dict, matched_id: str, today_recs: list,
+                  t: str, today: str, now_iso: str,
+                  conf: float, results: list) -> None:
+    """
+    Centralised punch recorder used by all recognition tiers.
+    Determines the next punch, validates its timing, then either
+    writes to Firestore or appends a time_blocked / already_complete result.
+    """
+    field, action, punch_num = _next_punch(today_recs)
+
+    if action == "already_complete":
+        results.append({"employee_id": matched_id, "name": emp["name"],
+                         "action": "already_complete", "punch": 0,
+                         "message": "All 6 punches complete for today",
+                         "confidence": conf})
+        return
+
+    # ─ Time gate ─
+    allowed, msg = _validate_punch_time(emp, action, t)
+    if not allowed:
+        results.append({"employee_id": matched_id, "name": emp["name"],
+                         "action": "time_blocked", "punch": punch_num,
+                         "message": msg, "confidence": conf})
+        return
+
+    # ─ Record the punch ─
+    if action == "check_in":          # first punch — create new record
+        rec_id = str(uuid.uuid4())
+        set_attendance_record(rec_id, {
+            "id": rec_id, "employee_id": matched_id, "name": emp["name"],
+            "department": emp["department"], "date": today,
+            "check_in": t, "check_out": None, "check_in_2": None,
+            "check_out_3": None, "check_in_3": None, "check_out_2": None,
+            "status": "present", "confidence": conf, "timestamp": now_iso
+        })
+    else:                              # subsequent punches — update existing record
+        update_attendance_record(today_recs[-1]["id"], {field: t})
+
+    results.append({"employee_id": matched_id, "name": emp["name"],
+                     "action": action, "punch": punch_num,
+                     "time": t, "confidence": conf})
+
+────────────────────────────────────────────────────
 
 def compute_quality_score(img_bgr: np.ndarray, face_box) -> float:
     """
@@ -1131,24 +1241,7 @@ async def scan_face(req: ScanRequest):
                 today_recs = get_employee_today_records(matched_id, today)
                 today_recs.sort(key=lambda r: r.get("timestamp", ""))
                 auto_update_face_profile(matched_id, best_emb_for_winner, best_score)
-                if not today_recs:
-                    rec_id = str(uuid.uuid4())
-                    set_attendance_record(rec_id, {
-                        "id": rec_id, "employee_id": matched_id, "name": emp["name"],
-                        "department": emp["department"], "date": today,
-                        "check_in": t, "check_out": None, "check_in_2": None,
-                        "check_out_3": None, "check_in_3": None, "check_out_2": None,
-                        "status": "present", "confidence": conf, "timestamp": now.isoformat()
-                    })
-                    results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in", "punch": 1, "time": t, "confidence": conf})
-                else:
-                    rec = today_recs[-1]; rid = rec["id"]
-                    if   rec.get("check_out")  is None: update_attendance_record(rid, {"check_out":  t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out",  "punch": 2, "time": t, "confidence": conf})
-                    elif rec.get("check_in_2") is None: update_attendance_record(rid, {"check_in_2": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2", "punch": 3, "time": t, "confidence": conf})
-                    elif rec.get("check_out_3")is None: update_attendance_record(rid, {"check_out_3":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_3","punch": 4, "time": t, "confidence": conf})
-                    elif rec.get("check_in_3") is None: update_attendance_record(rid, {"check_in_3": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_3", "punch": 5, "time": t, "confidence": conf})
-                    elif rec.get("check_out_2")is None: update_attendance_record(rid, {"check_out_2":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2","punch": 6, "time": t, "confidence": conf})
-                    else: results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 6 punches complete for today", "confidence": conf})
+                _record_punch(emp, matched_id, today_recs, t, today, now.isoformat(), conf, results)
 
         else:
             # ══ Tier 2: MediaPipe geometric matching ══
@@ -1181,28 +1274,10 @@ async def scan_face(req: ScanRequest):
                         today_recs.sort(key=lambda r: r.get("timestamp", ""))
                         if score > MP_AUTO_UPDATE:
                             auto_update_face_profile(matched_id, emb, score)
-                        if not today_recs:
-                            rec_id = str(uuid.uuid4())
-                            set_attendance_record(rec_id, {
-                                "id": rec_id, "employee_id": matched_id, "name": emp["name"],
-                                "department": emp["department"], "date": today,
-                                "check_in": t, "check_out": None, "check_in_2": None,
-                                "check_out_3": None, "check_in_3": None, "check_out_2": None,
-                                "status": "present", "confidence": conf, "timestamp": now.isoformat()
-                            })
-                            results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in", "punch": 1, "time": t, "confidence": conf})
-                        else:
-                            rec = today_recs[-1]; rid = rec["id"]
-                            if   rec.get("check_out")  is None: update_attendance_record(rid, {"check_out":  t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out",  "punch": 2, "time": t, "confidence": conf})
-                            elif rec.get("check_in_2") is None: update_attendance_record(rid, {"check_in_2": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2", "punch": 3, "time": t, "confidence": conf})
-                            elif rec.get("check_out_3")is None: update_attendance_record(rid, {"check_out_3":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_3","punch": 4, "time": t, "confidence": conf})
-                            elif rec.get("check_in_3") is None: update_attendance_record(rid, {"check_in_3": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_3", "punch": 5, "time": t, "confidence": conf})
-                            elif rec.get("check_out_2")is None: update_attendance_record(rid, {"check_out_2":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2","punch": 6, "time": t, "confidence": conf})
-                            else: results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 6 punches complete for today", "confidence": conf})
+                        _record_punch(emp, matched_id, today_recs, t, today, now.isoformat(), conf, results)
                     else:
-                        top = candidates[0] if candidates else None
                         results.append({"employee_id": None, "action": "unknown", "confidence": conf,
-                                        "message": f"Face not recognized. Please re-register your face in the admin panel."})
+                                        "message": "Face not recognized. Please re-register your face in the admin panel."})
                     break
 
             else:
@@ -1218,24 +1293,7 @@ async def scan_face(req: ScanRequest):
                         emp = get_employee(matched_id)
                         today_recs = get_employee_today_records(matched_id, today)
                         today_recs.sort(key=lambda r: r.get("timestamp", ""))
-                        if not today_recs:
-                            rec_id = str(uuid.uuid4())
-                            set_attendance_record(rec_id, {
-                                "id": rec_id, "employee_id": matched_id, "name": emp["name"],
-                                "department": emp["department"], "date": today,
-                                "check_in": t, "check_out": None, "check_in_2": None,
-                                "check_out_3": None, "check_in_3": None, "check_out_2": None,
-                                "status": "present", "confidence": conf, "timestamp": now.isoformat()
-                            })
-                            results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in", "punch": 1, "time": t, "confidence": conf})
-                        else:
-                            rec = today_recs[-1]; rid = rec["id"]
-                            if   rec.get("check_out")  is None: update_attendance_record(rid, {"check_out":  t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out",  "punch": 2, "time": t, "confidence": conf})
-                            elif rec.get("check_in_2") is None: update_attendance_record(rid, {"check_in_2": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2", "punch": 3, "time": t, "confidence": conf})
-                            elif rec.get("check_out_3")is None: update_attendance_record(rid, {"check_out_3":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_3","punch": 4, "time": t, "confidence": conf})
-                            elif rec.get("check_in_3") is None: update_attendance_record(rid, {"check_in_3": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_3", "punch": 5, "time": t, "confidence": conf})
-                            elif rec.get("check_out_2")is None: update_attendance_record(rid, {"check_out_2":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2","punch": 6, "time": t, "confidence": conf})
-                            else: results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 6 punches complete for today", "confidence": conf})
+                        _record_punch(emp, matched_id, today_recs, t, today, now.isoformat(), conf, results)
                     else:
                         top = candidates[0] if candidates else None
                         results.append({"employee_id": None, "action": "unknown", "confidence": conf,
