@@ -191,18 +191,22 @@ def get_attendance_by_filters(start_date=None, end_date=None, employee_id=None) 
 # Auto-update: score > 0.55 → add to rolling profile (max 20 embeddings)
 # ─────────────────────────────────────────────
 
+# ── Tier 1: InsightFace + ONNX Runtime (real ArcFace, no TensorFlow needed) ──
 try:
-    from deepface import DeepFace as _DeepFace
-    import tensorflow as _tf
-    _tf.get_logger().setLevel("ERROR")
-    DEEPFACE_AVAILABLE = True
-    logger.info("DeepFace ArcFace available — model will load on first scan.")
-except Exception as _e:
-    DEEPFACE_AVAILABLE = False
-    logger.warning(f"DeepFace not available ({_e}). Trying MediaPipe...")
+    from insightface.app import FaceAnalysis as _FaceAnalysis
+    _insight_app = _FaceAnalysis(
+        name="buffalo_sc",                      # ~37MB model: MobileFaceNet ArcFace
+        providers=["CPUExecutionProvider"],      # CPU-only, no CUDA needed
+    )
+    _insight_app.prepare(ctx_id=-1, det_size=(320, 320))   # 320px det = fast + low RAM
+    INSIGHTFACE_AVAILABLE = True
+    logger.info("InsightFace buffalo_sc loaded — real ArcFace 512-d embeddings ready.")
+except Exception as _ie:
+    INSIGHTFACE_AVAILABLE = False
+    logger.warning(f"InsightFace not available ({_ie}). Trying MediaPipe...")
 
-# For clarity everywhere below, alias the flag
-INSIGHTFACE_AVAILABLE = DEEPFACE_AVAILABLE
+# Legacy alias (keeps downstream code compatible)
+DEEPFACE_AVAILABLE = INSIGHTFACE_AVAILABLE
 
 # ── Tier 2: MediaPipe FaceMesh (lightweight, fits Render free tier ~150MB) ──
 try:
@@ -312,9 +316,9 @@ def chi_square_sim(a: np.ndarray, b: np.ndarray) -> float:
 
 def arcface_process(img_bgr: np.ndarray):
     """
-    Detect + align + embed all faces using DeepFace ArcFace.
+    Detect + embed all faces using InsightFace buffalo_sc (MobileFaceNet ArcFace).
     Returns list of (embedding_512, quality_score, bbox_xywh).
-    bbox_xywh = (x, y, w, h) as integers.
+    No TensorFlow required — runs on ONNX Runtime CPU.
     """
     if not INSIGHTFACE_AVAILABLE:
         return []
@@ -326,29 +330,20 @@ def arcface_process(img_bgr: np.ndarray):
         l = clahe.apply(l)
         img_bgr = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
 
-        # DeepFace.represent returns a list of dicts, one per detected face
-        # Each dict: {"embedding": [...], "facial_area": {"x","y","w","h"}, ...}
-        reps = _DeepFace.represent(
-            img_path=img_bgr,
-            model_name="ArcFace",
-            detector_backend="opencv",   # fast, same cascade we use
-            enforce_detection=False,     # return empty if no face rather than raise
-            align=True,
-        )
+        faces = _insight_app.get(img_bgr)   # returns list of Face objects
         results = []
-        for rep in reps:
-            raw_emb = rep.get("embedding")
-            if raw_emb is None:
+        for face in faces:
+            emb = face.embedding            # 512-d float32 from MobileFaceNet
+            if emb is None:
                 continue
-            emb = np.array(raw_emb, dtype=np.float32)
-            # L2-normalise to unit sphere
             norm = np.linalg.norm(emb)
             if norm > 0:
-                emb = emb / norm
-            fa = rep.get("facial_area", {})
-            x, y, w, h = fa.get("x", 0), fa.get("y", 0), fa.get("w", 64), fa.get("h", 64)
-            quality = compute_quality_score(img_bgr, (x, y, w, h))
-            results.append((emb, quality, (x, y, w, h)))   # bbox as xywh tuple
+                emb = emb / norm            # L2-normalise to unit sphere
+            bbox = face.bbox.astype(int)    # [x1, y1, x2, y2]
+            x1, y1, x2, y2 = bbox
+            bw, bh = max(x2 - x1, 1), max(y2 - y1, 1)
+            quality = compute_quality_score(img_bgr, (x1, y1, bw, bh))
+            results.append((emb, quality, (x1, y1, bw, bh)))
         return results
     except Exception as e:
         logger.warning(f"arcface_process error: {e}")
