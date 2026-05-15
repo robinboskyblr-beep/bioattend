@@ -400,7 +400,7 @@ def _record_punch(emp: dict, matched_id: str, today_recs: list,
                      "action": action, "punch": punch_num,
                      "time": t, "confidence": conf})
 
-────────────────────────────────────────────────────
+# ── Quality score ──────────────────────────────────────────────────────
 
 def compute_quality_score(img_bgr: np.ndarray, face_box) -> float:
     """
