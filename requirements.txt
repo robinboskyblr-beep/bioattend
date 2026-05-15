@@ -5,5 +5,5 @@ numpy==1.26.4
 python-multipart==0.0.9
 firebase-admin==7.4.0
 deepface==0.0.93
-tf-keras
-tensorflow-cpu; python_version < "3.14"
+tf-keras==2.19.0
+tensorflow-cpu==2.19.0
