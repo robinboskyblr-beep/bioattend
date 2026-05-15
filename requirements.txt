@@ -1,9 +1,17 @@
+# ── Core API ──────────────────────────────────────────────────────────────
 fastapi==0.110.0
 uvicorn[standard]==0.29.0
-opencv-python-headless==4.9.0.80
-numpy==1.26.4
 python-multipart==0.0.9
+
+# ── Computer Vision ────────────────────────────────────────────────────────
+opencv-python-headless==4.9.0.80
+numpy>=1.26.4,<2.0.0
+
+# ── Firebase ───────────────────────────────────────────────────────────────
 firebase-admin==7.4.0
+
+# ── Face Recognition (requires Python <=3.12 — set PYTHON_VERSION=3.11.9) ──
+# Render env var: PYTHON_VERSION=3.11.9  |  .python-version file: 3.11.9
 deepface==0.0.93
 tf-keras==2.19.0
 tensorflow-cpu==2.19.0
