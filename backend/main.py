@@ -247,8 +247,10 @@ _MP_KEY_IDX = [
 MP_EMB_SIZE = len(_MP_KEY_IDX) * (len(_MP_KEY_IDX) - 1) // 2   # = 190
 
 # ── Thresholds ──
-ARCFACE_THRESHOLD     = 0.45   # cosine similarity (ArcFace 512-d)
-ARCFACE_AUTO_UPDATE   = 0.55   # auto-update rolling profile above this
+ARCFACE_THRESHOLD     = 0.55   # cosine similarity — auto match (guide: 0.65, tuned down for buffalo_sc)
+ARCFACE_HIGH_RISK     = 0.42   # score 0.42–0.55 → ask user to reposition and re-scan
+ARCFACE_REJECT        = 0.42   # below this → hard reject
+ARCFACE_AUTO_UPDATE   = 0.62   # save new embedding into rolling profile above this
 MP_THRESHOLD          = 0.82   # cosine similarity (MediaPipe 190-d geometric)
 MP_AUTO_UPDATE        = 0.86   # auto-update threshold for MP embeddings
 LBP_THRESHOLD         = 0.78   # chi-square similarity (LBP fallback)
@@ -311,8 +313,64 @@ def chi_square_sim(a: np.ndarray, b: np.ndarray) -> float:
     chi2 = float(np.sum((a[mask] - b[mask]) ** 2 / (a[mask] + b[mask])))
     return 1.0 / (1.0 + chi2)
 
+# ── Data Augmentation + Centroid Enrollment ──────────────────────────────────
 
-# ── Primary: InsightFace ArcFace pipeline ─────────────────────────────
+def _augment_image(img_bgr: np.ndarray) -> list:
+    """
+    Expand one face image into 8 variants:
+      original, flip, rotate +10°, rotate -10°, bright +20%, dark -20%,
+      flip+rotate+10°, flip+rotate-10°
+    Returns list of np.ndarray images.
+    """
+    h, w = img_bgr.shape[:2]
+    cx, cy = w / 2, h / 2
+    M_pos = cv2.getRotationMatrix2D((cx, cy),  10, 1.0)
+    M_neg = cv2.getRotationMatrix2D((cx, cy), -10, 1.0)
+    flip  = cv2.flip(img_bgr, 1)
+    return [
+        img_bgr,
+        flip,
+        cv2.warpAffine(img_bgr, M_pos, (w, h)),
+        cv2.warpAffine(img_bgr, M_neg, (w, h)),
+        cv2.convertScaleAbs(img_bgr, alpha=1.2, beta=0),
+        cv2.convertScaleAbs(img_bgr, alpha=0.8, beta=0),
+        cv2.warpAffine(flip, M_pos, (w, h)),
+        cv2.warpAffine(flip, M_neg, (w, h)),
+    ]
+
+
+def compute_centroid(embeddings: list) -> Optional[np.ndarray]:
+    """
+    Average N L2-normalised embeddings and re-normalise.
+    Returns a single unit-vector centroid, or None if empty.
+    """
+    if not embeddings:
+        return None
+    stacked = np.stack([np.asarray(e, dtype=np.float32) for e in embeddings])
+    centroid = stacked.mean(axis=0)
+    norm = np.linalg.norm(centroid)
+    return centroid / norm if norm > 0 else centroid
+
+
+# ── Liveness gate (MediaPipe) ──────────────────────────────────────────────
+
+def check_liveness(img_bgr: np.ndarray) -> bool:
+    """
+    Lightweight liveness gate: verify the image contains a real human face
+    with detectable landmarks via MediaPipe FaceMesh before running InsightFace.
+    Returns True if face landmarks are found (likely a real person in frame).
+    """
+    if not MEDIAPIPE_AVAILABLE:
+        return True   # can't check — assume live, InsightFace will reject non-faces
+    try:
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        result  = _mp_face_mesh.process(img_rgb)
+        return result.multi_face_landmarks is not None
+    except Exception:
+        return True
+
+
+# ── Primary: InsightFace ArcFace pipeline ───────────────────────────────────
 
 def arcface_process(img_bgr: np.ndarray):
     """
@@ -603,7 +661,8 @@ class LoginRequest(BaseModel):
     password: str
 
 class ScanRequest(BaseModel):
-    image: str
+    image: str                              # primary frame (always required)
+    frames: Optional[List[str]] = None      # optional 2nd/3rd frames for temporal voting
 
 class ManualAttendanceRequest(BaseModel):
     employee_id: str
@@ -713,20 +772,32 @@ async def register_employee(req: RegisterRequest):
                 continue
 
             if INSIGHTFACE_AVAILABLE:
-                # ── Tier 1: ArcFace ──
-                faces = arcface_process(img)
-                for emb, quality, bbox in faces:
-                    if quality < 0.15:
-                        rejected += 1
-                        logger.info(f"Reg image {i}: rejected low quality ({quality:.2f})")
-                        continue
-                    embeddings.append(emb_to_str(emb.tolist()))
-                    x,y,w,h = bbox
-                    face_crop = img[y:y+h, x:x+w]
-                    face_path = FACES_DIR / f"{req.employee_id}_{i}.jpg"
-                    cv2.imwrite(str(face_path), face_crop)
-                    face_images_saved.append(str(face_path))
-                    break
+                # ── Tier 1: InsightFace + Augmentation Centroid ──
+                # Expand each photo to 8 augmented variants, embed all,
+                # average into one stable centroid vector per photo.
+                raw_faces = arcface_process(img)
+                if not raw_faces:
+                    rejected += 1
+                    continue
+                emb_orig, quality, bbox = raw_faces[0]
+                if quality < 0.15:
+                    rejected += 1
+                    logger.info(f"Reg image {i}: rejected low quality ({quality:.2f})")
+                    continue
+                # Augment the face crop, embed each variant
+                x, y, w, h = bbox
+                face_crop   = img[y:y+h, x:x+w]
+                aug_embs    = [emb_orig]
+                for aug_img in _augment_image(face_crop)[1:]:  # skip original (already have it)
+                    aug_faces = arcface_process(aug_img)
+                    if aug_faces:
+                        aug_embs.append(aug_faces[0][0])
+                centroid = compute_centroid(aug_embs)
+                if centroid is not None:
+                    embeddings.append(emb_to_str(centroid.tolist()))
+                face_path = FACES_DIR / f"{req.employee_id}_{i}.jpg"
+                cv2.imwrite(str(face_path), face_crop)
+                face_images_saved.append(str(face_path))
             elif MEDIAPIPE_AVAILABLE:
                 # ── Tier 2: MediaPipe geometric ──
                 # Store BOTH MediaPipe (190-d) AND LBP (512-d) embeddings so the
@@ -940,53 +1011,82 @@ async def scan_face(req: ScanRequest):
         results = []
 
         if INSIGHTFACE_AVAILABLE:
-            # ══ ArcFace path ══
-            arc_faces = arcface_process(img)
-            if not arc_faces:
+            # ══ Step A: Liveness gate (MediaPipe) ══
+            if not check_liveness(img):
+                return {"success": False, "detected": False,
+                        "message": "Liveness check failed — please ensure you are in front of the camera."}
+
+            # ══ Step B: Temporal Voting across 1–3 frames ══
+            # Collect all submitted frames (primary + optional extra frames)
+            all_frame_b64 = [req.image] + (req.frames or [])
+            vote_map: dict = {}   # employee_id → list of scores
+            best_emb_for_winner = None
+
+            for frame_b64 in all_frame_b64[:3]:   # cap at 3 frames
+                frame_img = decode_base64_image(frame_b64)
+                if frame_img is None:
+                    continue
+                arc_faces = arcface_process(frame_img)
+                if not arc_faces:
+                    continue
+                emb, quality, bbox = arc_faces[0]
+                if quality < 0.10:
+                    continue
+                matched_id, score, _ = compare_with_all_employees(emb, use_arcface=True)
+                eid = matched_id or "__unknown__"
+                vote_map.setdefault(eid, []).append((score, emb))
+
+            # Majority vote: employee that appears in the most frames wins
+            if not vote_map:
                 return {"success": False, "message": "No face detected. Please position your face in the camera.", "detected": False}
 
-            for emb, quality, bbox in arc_faces:
-                if quality < 0.10:
-                    results.append({"action": "low_quality", "message": "Image too blurry or dark — please improve lighting.", "confidence": 0})
-                    continue
+            winner_id = max(vote_map, key=lambda k: len(vote_map[k]))
+            winner_scores = vote_map[winner_id]
+            best_score = max(s for s, _ in winner_scores)
+            best_emb_for_winner = max(winner_scores, key=lambda x: x[0])[1]
+            votes_for_winner = len(winner_scores)
+            total_votes = sum(len(v) for v in vote_map.values())
 
-                matched_id, score, candidates = compare_with_all_employees(emb, use_arcface=True)
-                # Display confidence as 0-100%, scaled from ArcFace cosine range (0.3-0.7 typical)
-                conf = round(min(score / ARCFACE_THRESHOLD, 1.0) * 100, 1)
+            # Require majority (≥2 of 3, or 1 of 1)
+            if total_votes > 1 and votes_for_winner < (total_votes // 2 + 1):
+                return {"success": False, "detected": True,
+                        "message": "Inconsistent scan — please hold still and try again.",
+                        "results": []}
 
-                if matched_id:
-                    emp = get_employee(matched_id)
-                    today_recs = get_employee_today_records(matched_id, today)
-                    today_recs.sort(key=lambda r: r.get("timestamp", ""))
+            conf = round(min(best_score / ARCFACE_THRESHOLD, 1.0) * 100, 1)
 
-                    # Auto-update rolling face profile
-                    auto_update_face_profile(matched_id, emb, score)
-
-                    # Record punch
-                    if not today_recs:
-                        rec_id = str(uuid.uuid4())
-                        set_attendance_record(rec_id, {
-                            "id": rec_id, "employee_id": matched_id, "name": emp["name"],
-                            "department": emp["department"], "date": today,
-                            "check_in": t, "check_out": None, "check_in_2": None,
-                            "check_out_3": None, "check_in_3": None, "check_out_2": None,
-                            "status": "present", "confidence": conf, "timestamp": now.isoformat()
-                        })
-                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in", "punch": 1, "time": t, "confidence": conf})
-                    else:
-                        rec = today_recs[-1]
-                        rid = rec["id"]
-                        if   rec.get("check_out")  is None: update_attendance_record(rid, {"check_out":  t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out",  "punch": 2, "time": t, "confidence": conf})
-                        elif rec.get("check_in_2") is None: update_attendance_record(rid, {"check_in_2": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2", "punch": 3, "time": t, "confidence": conf})
-                        elif rec.get("check_out_3")is None: update_attendance_record(rid, {"check_out_3":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_3","punch": 4, "time": t, "confidence": conf})
-                        elif rec.get("check_in_3") is None: update_attendance_record(rid, {"check_in_3": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_3", "punch": 5, "time": t, "confidence": conf})
-                        elif rec.get("check_out_2")is None: update_attendance_record(rid, {"check_out_2":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2","punch": 6, "time": t, "confidence": conf})
-                        else: results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 6 punches complete for today", "confidence": conf})
+            # ══ Step C: Dynamic threshold ══
+            if winner_id == "__unknown__" or best_score < ARCFACE_REJECT:
+                results.append({"employee_id": None, "action": "unknown", "confidence": conf,
+                                 "message": "Face not recognized. Please re-register or improve lighting."})
+            elif best_score < ARCFACE_THRESHOLD:
+                # High-risk zone: ask user to reposition
+                results.append({"employee_id": None, "action": "rescan", "confidence": conf,
+                                 "message": "Low confidence — please look directly at the camera and scan again."})
+            else:
+                matched_id = winner_id
+                emp = get_employee(matched_id)
+                today_recs = get_employee_today_records(matched_id, today)
+                today_recs.sort(key=lambda r: r.get("timestamp", ""))
+                auto_update_face_profile(matched_id, best_emb_for_winner, best_score)
+                if not today_recs:
+                    rec_id = str(uuid.uuid4())
+                    set_attendance_record(rec_id, {
+                        "id": rec_id, "employee_id": matched_id, "name": emp["name"],
+                        "department": emp["department"], "date": today,
+                        "check_in": t, "check_out": None, "check_in_2": None,
+                        "check_out_3": None, "check_in_3": None, "check_out_2": None,
+                        "status": "present", "confidence": conf, "timestamp": now.isoformat()
+                    })
+                    results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in", "punch": 1, "time": t, "confidence": conf})
                 else:
-                    top = candidates[0] if candidates else None
-                    results.append({"employee_id": None, "action": "unknown", "confidence": conf,
-                                    "message": f"Face not recognized (best: {top[1] if top else 'none'} @ {round(top[0],3) if top else 0} — need ≥{ARCFACE_THRESHOLD})"})
-                break  # process only the largest/first face per scan
+                    rec = today_recs[-1]; rid = rec["id"]
+                    if   rec.get("check_out")  is None: update_attendance_record(rid, {"check_out":  t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out",  "punch": 2, "time": t, "confidence": conf})
+                    elif rec.get("check_in_2") is None: update_attendance_record(rid, {"check_in_2": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2", "punch": 3, "time": t, "confidence": conf})
+                    elif rec.get("check_out_3")is None: update_attendance_record(rid, {"check_out_3":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_3","punch": 4, "time": t, "confidence": conf})
+                    elif rec.get("check_in_3") is None: update_attendance_record(rid, {"check_in_3": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_3", "punch": 5, "time": t, "confidence": conf})
+                    elif rec.get("check_out_2")is None: update_attendance_record(rid, {"check_out_2":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2","punch": 6, "time": t, "confidence": conf})
+                    else: results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 6 punches complete for today", "confidence": conf})
 
         else:
             # ══ Tier 2: MediaPipe geometric matching ══
