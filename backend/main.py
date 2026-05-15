@@ -249,8 +249,8 @@ MP_EMB_SIZE = len(_MP_KEY_IDX) * (len(_MP_KEY_IDX) - 1) // 2   # = 190
 # ── Thresholds ──
 ARCFACE_THRESHOLD     = 0.45   # cosine similarity (ArcFace 512-d)
 ARCFACE_AUTO_UPDATE   = 0.55   # auto-update rolling profile above this
-MP_THRESHOLD          = 0.90   # cosine similarity (MediaPipe 190-d geometric)
-MP_AUTO_UPDATE        = 0.93   # auto-update threshold for MP embeddings
+MP_THRESHOLD          = 0.82   # cosine similarity (MediaPipe 190-d geometric)
+MP_AUTO_UPDATE        = 0.86   # auto-update threshold for MP embeddings
 LBP_THRESHOLD         = 0.78   # chi-square similarity (LBP fallback)
 LEGACY_THRESHOLD      = 0.90   # cosine similarity (v1 raw-pixel, legacy)
 MAX_EMBEDDINGS        = 20     # rolling cap per user
@@ -729,13 +729,19 @@ async def register_employee(req: RegisterRequest):
                     break
             elif MEDIAPIPE_AVAILABLE:
                 # ── Tier 2: MediaPipe geometric ──
+                # Store BOTH MediaPipe (190-d) AND LBP (512-d) embeddings so the
+                # employee can be recognised by either method during the transition.
                 mp_faces = mediapipe_process(img)
                 for emb, quality, bbox in mp_faces:
                     if quality < 0.15:
                         rejected += 1
                         continue
-                    embeddings.append(emb_to_str(emb.tolist()))
-                    x,y,w,h = bbox
+                    embeddings.append(emb_to_str(emb.tolist()))   # MediaPipe embedding
+                    # Also store LBP embedding as backup for legacy-mode scans
+                    x, y, w, h = bbox
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    lbp_emb = _lbp_embed(gray, (x, y, w, h))
+                    embeddings.append(emb_to_str(lbp_emb.tolist()))  # LBP backup
                     face_path = FACES_DIR / f"{req.employee_id}_{i}.jpg"
                     cv2.imwrite(str(face_path), img[y:y+h, x:x+w])
                     face_images_saved.append(str(face_path))
@@ -991,8 +997,22 @@ async def scan_face(req: ScanRequest):
                     if quality < 0.10:
                         results.append({"action": "low_quality", "message": "Image too blurry or dark.", "confidence": 0})
                         continue
+
+                    # ─ Try MediaPipe matching first (employees registered via MP) ─
                     matched_id, score, candidates = compare_with_all_employees(emb, use_mediapipe=True)
-                    conf = round(min(score / MP_THRESHOLD, 1.0) * 100, 1)
+
+                    # ─ If no MP embeddings found at all (score=0, no candidates)
+                    #   fall back to LBP on the SAME face crop — handles legacy employees ─
+                    if matched_id is None and score == 0 and not candidates:
+                        logger.info("No MP embeddings in DB — falling back to LBP for this scan.")
+                        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                        x, y, w, h = bbox
+                        lbp_emb = _lbp_embed(gray, (x, y, w, h))
+                        matched_id, score, candidates = compare_with_all_employees(lbp_emb, use_arcface=False)
+                        conf = round(score * 100, 1)
+                    else:
+                        conf = round(min(score / MP_THRESHOLD, 1.0) * 100, 1)
+
                     if matched_id:
                         emp = get_employee(matched_id)
                         today_recs = get_employee_today_records(matched_id, today)
@@ -1020,9 +1040,8 @@ async def scan_face(req: ScanRequest):
                     else:
                         top = candidates[0] if candidates else None
                         results.append({"employee_id": None, "action": "unknown", "confidence": conf,
-                                        "message": f"Face not recognized (best: {top[1] if top else 'none'} @ {round(top[0]*100,1) if top else 0}% — need ≥{round(MP_THRESHOLD*100)}%)"})
+                                        "message": f"Face not recognized. Please re-register your face in the admin panel."})
                     break
-
 
             else:
                 # ══ Tier 3: LBP fallback ══
