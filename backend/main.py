@@ -181,15 +181,14 @@ def get_attendance_by_filters(start_date=None, end_date=None, employee_id=None) 
     return [d.to_dict() for d in docs]
 
 # ─────────────────────────────────────────────
-# Face Recognition — InsightFace ArcFace (v3)
+# Face Recognition — DeepFace ArcFace (v3)
 # ─────────────────────────────────────────────
 # Professional deep-learning pipeline:
-#   Camera → Detection → Alignment → ArcFace embedding → Cosine matching
-# Embeddings: 512-dim L2-normalised float32 vectors
-# Similarity: cosine similarity, threshold 0.45 (InsightFace scale)
-# Matching:   max(cosine_sim(new, stored_i) for stored_i in user_embeddings)
-# Auto-update: if score > AUTO_UPDATE_THRESHOLD, new embedding is added
-#              and profile is pruned to MAX_EMBEDDINGS_PER_USER
+#   Camera → CLAHE → ArcFace embedding (512-dim) → Cosine matching
+# Primary:  DeepFace ArcFace (requires TensorFlow, active on Render/Python≤3.12)
+# Fallback: LBP histogram (always available, no extra deps)
+# Matching: max(cosine_sim(new, stored_i) for stored_i in user_embeddings)
+# Auto-update: score > 0.55 → add to rolling profile (max 20 embeddings)
 # ─────────────────────────────────────────────
 
 try:
@@ -462,7 +461,6 @@ def auto_update_face_profile(employee_id: str, new_emb: np.ndarray, score: float
 
 
 # ─────────────────────────────────────────────
-
 # Pydantic Models
 # ─────────────────────────────────────────────
 
@@ -1228,6 +1226,8 @@ async def backup_range(start_date: Optional[str] = None, end_date: Optional[str]
             "clock_in":    r.get("check_in", ""),
             "lunch_out":   r.get("check_out", ""),
             "lunch_in":    r.get("check_in_2", ""),
+            "break_out":   r.get("check_out_3", ""),
+            "break_in":    r.get("check_in_3", ""),
             "clock_out":   r.get("check_out_2", ""),
             "status":      r.get("status", ""),
             "confidence":  r.get("confidence", ""),
@@ -1388,21 +1388,24 @@ async def download_backup_csv():
     writer = csv.writer(output)
     writer.writerow([
         "Date", "Employee Name", "Employee ID", "Department",
-        "Clock In (AM)", "Clock Out (Lunch)", "Clock In (PM)", "Clock Out (Day)",
+        "IN (Morning)", "OUT (Lunch)", "IN (Lunch)",
+        "OUT (Break)", "IN (Break)", "OUT (Day)",
         "Status", "Punches", "Confidence %"
     ])
     for rec in records:
         emp  = emp_map.get(rec.get("employee_id", ""), {})
         dept = emp.get("department", rec.get("department", ""))
-        p1   = rec.get("check_in")    or ""
-        p2   = rec.get("check_out")   or ""
-        p3   = rec.get("check_in_2")  or ""
-        p4   = rec.get("check_out_2") or ""
-        punches = sum(1 for v in [p1, p2, p3, p4] if v)
+        p1   = rec.get("check_in")     or ""
+        p2   = rec.get("check_out")    or ""
+        p3   = rec.get("check_in_2")   or ""
+        p4   = rec.get("check_out_3")  or ""
+        p5   = rec.get("check_in_3")   or ""
+        p6   = rec.get("check_out_2")  or ""
+        punches = sum(1 for v in [p1, p2, p3, p4, p5, p6] if v)
         writer.writerow([
             rec.get("date", ""), rec.get("name", ""), rec.get("employee_id", ""),
-            dept, p1, p2, p3, p4,
-            rec.get("status", ""), f"{punches}/4", rec.get("confidence", ""),
+            dept, p1, p2, p3, p4, p5, p6,
+            rec.get("status", ""), f"{punches}/6", rec.get("confidence", ""),
         ])
 
     csv_bytes = output.getvalue().encode("utf-8")
@@ -1471,21 +1474,24 @@ async def send_backup_email(req: BackupEmailRequest):
     writer = csv.writer(output)
     writer.writerow([
         "Date", "Employee Name", "Employee ID", "Department",
-        "Clock In (AM)", "Clock Out (Lunch)", "Clock In (PM)", "Clock Out (Day)",
+        "IN (Morning)", "OUT (Lunch)", "IN (Lunch)",
+        "OUT (Break)", "IN (Break)", "OUT (Day)",
         "Status", "Punches", "Confidence %"
     ])
     for rec in records:
         emp  = emp_map.get(rec.get("employee_id", ""), {})
         dept = emp.get("department", rec.get("department", ""))
-        p1   = rec.get("check_in")    or "—"
-        p2   = rec.get("check_out")   or "—"
-        p3   = rec.get("check_in_2")  or "—"
-        p4   = rec.get("check_out_2") or "—"
-        punches = sum(1 for v in [p1, p2, p3, p4] if v != "—")
+        p1   = rec.get("check_in")    or ""
+        p2   = rec.get("check_out")   or ""
+        p3   = rec.get("check_in_2")  or ""
+        p4   = rec.get("check_out_3") or ""
+        p5   = rec.get("check_in_3")  or ""
+        p6   = rec.get("check_out_2") or ""
+        punches = sum(1 for v in [p1, p2, p3, p4, p5, p6] if v)
         writer.writerow([
             rec.get("date", ""), rec.get("name", ""), rec.get("employee_id", ""),
-            dept, p1, p2, p3, p4,
-            rec.get("status", ""), f"{punches}/4", rec.get("confidence", ""),
+            dept, p1, p2, p3, p4, p5, p6,
+            rec.get("status", ""), f"{punches}/6", rec.get("confidence", ""),
         ])
     csv_bytes = output.getvalue().encode("utf-8")
 

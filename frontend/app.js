@@ -468,43 +468,99 @@ function showEmpResult(d) {
 
       card.classList.add('check-in');
 
-      icon.textContent = '...'; name.textContent = res.name; dept.textContent = '';
+      icon.textContent = '✅'; name.textContent = res.name; dept.textContent = '';
 
-      action.textContent = ' Clocked IN'; action.className = 'src-action in';
+      action.textContent = `${res.name} successfully clocked in`; action.className = 'src-action in';
 
       timeEl.textContent = res.time; conf.textContent = `Confidence: ${res.confidence}%`;
 
       if (dot) dot.className = 'scan-status-dot success';
 
-      if (txt) txt.textContent = `${res.name} clocked IN at ${res.time}`;
+      if (txt) txt.textContent = `${res.name} successfully clocked in`;
 
     } else if (res.action === 'check_out') {
 
       card.classList.add('check-out');
 
-      icon.textContent = ''; name.textContent = res.name; dept.textContent = '';
+      icon.textContent = '✅'; name.textContent = res.name; dept.textContent = '';
 
-      action.textContent = ' Clocked OUT'; action.className = 'src-action out';
+      action.textContent = `${res.name} successfully clocked out`; action.className = 'src-action out';
 
       timeEl.textContent = res.time; conf.textContent = `Confidence: ${res.confidence}%`;
 
       if (dot) dot.className = 'scan-status-dot success';
 
-      if (txt) txt.textContent = `${res.name} clocked OUT at ${res.time}`;
+      if (txt) txt.textContent = `${res.name} successfully clocked out`;
+
+    } else if (res.action === 'check_in_2') {
+
+      card.classList.add('check-in');
+
+      icon.textContent = '✅'; name.textContent = res.name; dept.textContent = '';
+
+      action.textContent = `${res.name} successfully clocked in`; action.className = 'src-action in';
+
+      timeEl.textContent = res.time; conf.textContent = `Confidence: ${res.confidence}%`;
+
+      if (dot) dot.className = 'scan-status-dot success';
+
+      if (txt) txt.textContent = `${res.name} successfully clocked in`;
+
+    } else if (res.action === 'check_out_3') {
+
+      card.classList.add('check-out');
+
+      icon.textContent = '✅'; name.textContent = res.name; dept.textContent = '';
+
+      action.textContent = `${res.name} successfully clocked out`; action.className = 'src-action out';
+
+      timeEl.textContent = res.time; conf.textContent = `Confidence: ${res.confidence}%`;
+
+      if (dot) dot.className = 'scan-status-dot success';
+
+      if (txt) txt.textContent = `${res.name} successfully clocked out`;
+
+    } else if (res.action === 'check_in_3') {
+
+      card.classList.add('check-in');
+
+      icon.textContent = '✅'; name.textContent = res.name; dept.textContent = '';
+
+      action.textContent = `${res.name} successfully clocked in`; action.className = 'src-action in';
+
+      timeEl.textContent = res.time; conf.textContent = `Confidence: ${res.confidence}%`;
+
+      if (dot) dot.className = 'scan-status-dot success';
+
+      if (txt) txt.textContent = `${res.name} successfully clocked in`;
+
+    } else if (res.action === 'check_out_2') {
+
+      card.classList.add('check-out');
+
+      icon.textContent = '✅'; name.textContent = res.name; dept.textContent = '';
+
+      action.textContent = `${res.name} successfully clocked out`; action.className = 'src-action out';
+
+      timeEl.textContent = res.time; conf.textContent = `Confidence: ${res.confidence}%`;
+
+      if (dot) dot.className = 'scan-status-dot success';
+
+      if (txt) txt.textContent = `${res.name} successfully clocked out`;
 
     } else {
 
       card.classList.add('fail');
 
-      icon.textContent = ''; name.textContent = res.name || 'Unknown'; dept.textContent = '';
+      icon.textContent = '⚠'; name.textContent = res.name || 'Unknown'; dept.textContent = '';
 
-      action.textContent = res.message || 'Already complete'; action.className = 'src-action fail';
+      action.textContent = 'Face not matched'; action.className = 'src-action fail';
 
       timeEl.textContent = new Date().toLocaleTimeString(); conf.textContent = '';
 
       if (dot) dot.className = 'scan-status-dot error';
 
-      if (txt) txt.textContent = res.message || 'Attendance already complete';
+      if (txt) txt.textContent = 'Face not matched';
 
     }
 
@@ -584,8 +640,10 @@ async function loadEmpTodayAttendance() {
 
       if (badge) {
         if (rec.check_out_2)      { badge.textContent = 'Complete ✅'; badge.className = 'log-entry-badge out'; }
-        else if (rec.check_in_2)  { badge.textContent = 'Afternoon In'; badge.className = 'log-entry-badge in'; }
-        else if (rec.check_out)   { badge.textContent = 'Lunch Break'; badge.className = 'log-entry-badge'; }
+        else if (rec.check_in_3)  { badge.textContent = 'Break In'; badge.className = 'log-entry-badge in'; }
+        else if (rec.check_out_3) { badge.textContent = 'Break Out'; badge.className = 'log-entry-badge'; }
+        else if (rec.check_in_2)  { badge.textContent = 'Lunch In'; badge.className = 'log-entry-badge in'; }
+        else if (rec.check_out)   { badge.textContent = 'Lunch Out'; badge.className = 'log-entry-badge'; }
         else if (rec.check_in)    { badge.textContent = 'Morning In'; badge.className = 'log-entry-badge in'; }
         else                      { badge.textContent = 'Not yet'; badge.className = 'log-entry-badge'; }
       }
@@ -842,22 +900,24 @@ async function loadKioskTodayLog() {
       return;
     }
     log.innerHTML = d.records.slice().reverse().slice(0, 6).map(rec => {
-      // Show all filled punches
+      // Show all 6 filled punches
       const punches = [
-        rec.check_in    ? `<span style="color:var(--green)">▶ ${rec.check_in}</span>`    : '',
-        rec.check_out   ? `<span style="color:var(--blue)">◀ ${rec.check_out}</span>`   : '',
-        rec.check_in_2  ? `<span style="color:var(--green)">▶ ${rec.check_in_2}</span>` : '',
-        rec.check_out_2 ? `<span style="color:var(--blue)">◀ ${rec.check_out_2}</span>` : '',
+        rec.check_in     ? `<span style="color:var(--green)">▶ ${rec.check_in}</span>`    : '',
+        rec.check_out    ? `<span style="color:var(--red)">◀ ${rec.check_out}</span>`     : '',
+        rec.check_in_2   ? `<span style="color:var(--green)">▶ ${rec.check_in_2}</span>`  : '',
+        rec.check_out_3  ? `<span style="color:var(--red)">◀ ${rec.check_out_3}</span>`  : '',
+        rec.check_in_3   ? `<span style="color:var(--green)">▶ ${rec.check_in_3}</span>`  : '',
+        rec.check_out_2  ? `<span style="color:var(--red)">◀ ${rec.check_out_2}</span>`  : '',
       ].filter(Boolean);
       const pCount = punches.length;
-      const isDone = pCount === 4;
+      const isDone = pCount === 6;
       return `<div class="kiosk-today-row">
         <div class="kiosk-today-av">${rec.name[0]}</div>
         <div class="kiosk-today-info">
           <div class="kiosk-today-name">${rec.name}</div>
           <div class="kiosk-today-meta" style="display:flex;gap:8px;flex-wrap:wrap">${punches.join('<span style="opacity:.3">·</span>')}</div>
         </div>
-        <span class="kiosk-today-badge ${isDone ? 'out' : 'in'}">${pCount}/4</span>
+        <span class="kiosk-today-badge ${isDone ? 'out' : 'in'}">${pCount}/6</span>
       </div>`;
     }).join('');
 
