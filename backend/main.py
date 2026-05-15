@@ -253,7 +253,7 @@ ARCFACE_REJECT        = 0.42   # below this → hard reject
 ARCFACE_AUTO_UPDATE   = 0.62   # save new embedding into rolling profile above this
 MP_THRESHOLD          = 0.82   # cosine similarity (MediaPipe 190-d geometric)
 MP_AUTO_UPDATE        = 0.86   # auto-update threshold for MP embeddings
-LBP_THRESHOLD         = 0.78   # chi-square similarity (LBP fallback)
+LBP_THRESHOLD         = 0.65   # chi-square similarity (LBP fallback — lower = more lenient)
 LEGACY_THRESHOLD      = 0.90   # cosine similarity (v1 raw-pixel, legacy)
 MAX_EMBEDDINGS        = 20     # rolling cap per user
 

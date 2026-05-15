@@ -733,18 +733,28 @@ async function startScan() {
 
   setKioskStatus('scanning', 'Analyzing face — please hold still');
 
-  const img = captureFrame('kiosk-video', 'kiosk-canvas');
+  // Capture frame 1 immediately
+  const img1 = captureFrame('kiosk-video', 'kiosk-canvas');
 
-  if (!img) {
+  if (!img1) {
     setKioskStatus('error', 'Camera not ready');
     if (btn) btn.disabled = false;
     if (btnTxt) btnTxt.textContent = 'Scan Attendance';
     return;
   }
 
+  // Capture frames 2 and 3 with 500ms gaps for temporal voting
+  const extraFrames = [];
+  await new Promise(res => setTimeout(res, 500));
+  const img2 = captureFrame('kiosk-video', 'kiosk-canvas');
+  if (img2) extraFrames.push(img2);
+  await new Promise(res => setTimeout(res, 500));
+  const img3 = captureFrame('kiosk-video', 'kiosk-canvas');
+  if (img3) extraFrames.push(img3);
+
   try {
 
-    const r = await fetch(`${API}/attendance/scan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: img }) });
+    const r = await fetch(`${API}/attendance/scan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: img1, frames: extraFrames }) });
 
     const d = await r.json();
 
@@ -785,6 +795,7 @@ function showKioskPopup(d) {
   // Determine what happened and build the single message
   let msgText = 'Face not matched';
   let isSuccess = false;
+  let isRescan = false;
 
   if (d.success && d.detected && d.results && d.results.length > 0) {
     const res = d.results[0];
@@ -803,14 +814,24 @@ function showKioskPopup(d) {
       loadKioskTodayLog();
       playBeep('success');
       setKioskStatus('success', msgText);
+    } else if (res.action === 'rescan') {
+      // Medium confidence — guide user to reposition
+      msgText = '📷 Look directly at the camera and try again';
+      isRescan = true;
+      playBeep('error');
+      setKioskStatus('error', 'Low confidence — please reposition');
+    } else if (res.action === 'already_complete') {
+      msgText = `${res.name} — All punches complete for today ✅`;
+      isSuccess = true;
+      setKioskStatus('success', msgText);
     } else {
-      // already_complete or unknown → treat as no-match
-      msgText = 'Face not matched';
+      // unknown
+      msgText = res.message || 'Face not recognized — please re-register';
       playBeep('error');
       setKioskStatus('error', msgText);
     }
   } else {
-    msgText = 'Face not matched';
+    msgText = d.message || 'Face not matched';
     playBeep('error');
     setKioskStatus('error', msgText);
   }
@@ -818,7 +839,7 @@ function showKioskPopup(d) {
   // Populate popup elements
   if (isSuccess) {
     card.classList.add('check-in');
-    avatar.textContent        = '';
+    avatar.textContent        = '✅';
     greet.textContent         = '';
     name.textContent          = '';
     name.style.fontSize       = '';
@@ -826,6 +847,15 @@ function showKioskPopup(d) {
     name.style.textShadow     = '';
     action.textContent        = msgText;
     action.className          = 'kiosk-popup-action in';
+    timeEl.textContent        = '';
+    conf.textContent          = '';
+  } else if (isRescan) {
+    card.classList.add('rescan');
+    avatar.textContent        = '📷';
+    greet.textContent         = '';
+    name.textContent          = '';
+    action.textContent        = msgText;
+    action.className          = 'kiosk-popup-action rescan';
     timeEl.textContent        = '';
     conf.textContent          = '';
   } else {
