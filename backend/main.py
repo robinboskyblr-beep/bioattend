@@ -194,29 +194,60 @@ def get_attendance_by_filters(start_date=None, end_date=None, employee_id=None) 
 try:
     from deepface import DeepFace as _DeepFace
     import tensorflow as _tf
-    _tf.get_logger().setLevel("ERROR")   # silence TF INFO spam
-    # NOTE: Model loads lazily on first scan — do NOT call build_model() here
-    # as it loads 400MB into RAM and OOMs on Render free tier (512MB limit).
+    _tf.get_logger().setLevel("ERROR")
     DEEPFACE_AVAILABLE = True
     logger.info("DeepFace ArcFace available — model will load on first scan.")
 except Exception as _e:
     DEEPFACE_AVAILABLE = False
-    logger.warning(f"DeepFace not available ({_e}). Falling back to LBP.")
+    logger.warning(f"DeepFace not available ({_e}). Trying MediaPipe...")
 
 # For clarity everywhere below, alias the flag
 INSIGHTFACE_AVAILABLE = DEEPFACE_AVAILABLE
 
-# ── Fallback: LBP cascade (used only when InsightFace is unavailable) ──
+# ── Tier 2: MediaPipe FaceMesh (lightweight, fits Render free tier ~150MB) ──
+try:
+    import mediapipe as _mp
+    _mp_face_mesh = _mp.solutions.face_mesh.FaceMesh(
+        static_image_mode=True,
+        max_num_faces=1,
+        refine_landmarks=True,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+    MEDIAPIPE_AVAILABLE = True
+    logger.info("MediaPipe FaceMesh loaded — using geometric landmark embeddings.")
+except Exception as _me:
+    MEDIAPIPE_AVAILABLE = False
+    logger.warning(f"MediaPipe not available ({_me}). Falling back to LBP.")
+
+# ── Tier 3 fallback: LBP cascade ──────────────────────────────────────────
 _face_cascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 )
-LBP_EMB_SIZE  = 512
+LBP_EMB_SIZE    = 512
 LEGACY_EMB_SIZE = 16384
 
+# 20 key FaceMesh landmark indices used for geometric embedding
+_MP_KEY_IDX = [
+    33, 133,   # left eye outer / inner corners
+    362, 263,  # right eye inner / outer corners
+    159, 145,  # left eye top / bottom
+    386, 374,  # right eye top / bottom
+    70,  300,  # left / right eyebrow centre
+    4,   94,   # nose tip / base
+    61,  291,  # left / right mouth corner
+    13,  14,   # upper / lower lip centre
+    152, 10,   # chin / forehead centre
+    234, 454,  # left / right cheek
+]
+MP_EMB_SIZE = len(_MP_KEY_IDX) * (len(_MP_KEY_IDX) - 1) // 2   # = 190
+
 # ── Thresholds ──
-ARCFACE_THRESHOLD     = 0.45   # cosine similarity (InsightFace ArcFace)
-ARCFACE_AUTO_UPDATE   = 0.55   # above this → save new embedding to profile
-LBP_THRESHOLD         = 0.78   # chi-square similarity (fallback LBP)
+ARCFACE_THRESHOLD     = 0.45   # cosine similarity (ArcFace 512-d)
+ARCFACE_AUTO_UPDATE   = 0.55   # auto-update rolling profile above this
+MP_THRESHOLD          = 0.90   # cosine similarity (MediaPipe 190-d geometric)
+MP_AUTO_UPDATE        = 0.93   # auto-update threshold for MP embeddings
+LBP_THRESHOLD         = 0.78   # chi-square similarity (LBP fallback)
 LEGACY_THRESHOLD      = 0.90   # cosine similarity (v1 raw-pixel, legacy)
 MAX_EMBEDDINGS        = 20     # rolling cap per user
 
@@ -376,42 +407,108 @@ def decode_base64_image(b64_str: str) -> np.ndarray:
 def _is_arcface_emb(arr: np.ndarray) -> bool:
     return len(arr) == 512 and (abs(np.linalg.norm(arr) - 1.0) < 0.05)
 
-def compare_with_all_employees(embedding: np.ndarray, use_arcface: bool = False):
+def _is_mp_emb(arr: np.ndarray) -> bool:
+    return len(arr) == MP_EMB_SIZE and (abs(np.linalg.norm(arr) - 1.0) < 0.05)
+
+
+# ── MediaPipe geometric embedding ─────────────────────────────────────────
+
+def _mp_landmark_embed(lms, img_h: int, img_w: int) -> np.ndarray:
+    """
+    Build a 190-d pose-invariant embedding from 20 key FaceMesh landmarks.
+    Uses pairwise inter-landmark distances, normalised by inter-ocular distance.
+    L2-normalised so cosine similarity can be used directly.
+    """
+    pts = np.array(
+        [(lms[i].x * img_w, lms[i].y * img_h) for i in _MP_KEY_IDX],
+        dtype=np.float32,
+    )
+    # Inter-ocular distance: left-outer-eye (idx 0 → lm 33) to right-outer-eye (idx 3 → lm 263)
+    iod = np.linalg.norm(pts[0] - pts[3])
+    if iod < 1.0:
+        return None
+    dists = []
+    for i in range(len(pts)):
+        for j in range(i + 1, len(pts)):
+            dists.append(float(np.linalg.norm(pts[i] - pts[j])) / iod)
+    emb = np.array(dists, dtype=np.float32)
+    norm = np.linalg.norm(emb)
+    return emb / norm if norm > 0 else emb
+
+
+def mediapipe_process(img_bgr: np.ndarray):
+    """
+    Detect faces and compute 190-d geometric embeddings using MediaPipe FaceMesh.
+    Returns list of (embedding_190, quality_score, bbox_xywh).
+    """
+    if not MEDIAPIPE_AVAILABLE:
+        return []
+    try:
+        # CLAHE enhancement (same as ArcFace path)
+        lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+        img_bgr = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        h, w = img_rgb.shape[:2]
+        result = _mp_face_mesh.process(img_rgb)
+        if not result.multi_face_landmarks:
+            return []
+        output = []
+        for face_lms in result.multi_face_landmarks:
+            lms = face_lms.landmark
+            xs = [lm.x * w for lm in lms]
+            ys = [lm.y * h for lm in lms]
+            x1, y1 = int(min(xs)), int(min(ys))
+            x2, y2 = int(max(xs)), int(max(ys))
+            bw, bh = max(x2 - x1, 1), max(y2 - y1, 1)
+            quality = compute_quality_score(img_bgr, (x1, y1, bw, bh))
+            emb = _mp_landmark_embed(lms, h, w)
+            if emb is None:
+                continue
+            output.append((emb, quality, (x1, y1, bw, bh)))
+        return output
+    except Exception as e:
+        logger.warning(f"mediapipe_process error: {e}")
+        return []
+
+
+def compare_with_all_employees(
+    embedding: np.ndarray,
+    use_arcface: bool = False,
+    use_mediapipe: bool = False,
+):
     """
     Match embedding against every employee's stored embeddings.
-
-    Strategy (per employee):
-      score = max(similarity(new_emb, stored_i) for stored_i in stored_embeddings)
-
-    This is the recommended professional approach — best-sample wins.
-    Ambiguity guard: reject if gap between top-2 employees < 0.04.
-
-    Returns (matched_employee_id | None, best_score, top_candidates)
+    Priority tier detection: ArcFace → MediaPipe → LBP.
+    Ambiguity guard: reject if score gap between top-2 employees < 0.04.
+    Returns (matched_id | None, best_score, top_candidates)
     """
     employees = get_all_employees()
-    best_match_id   = None
-    best_score      = 0.0
-    all_candidates  = []   # [(score, name, id)]
+    best_match_id  = None
+    best_score     = 0.0
+    all_candidates = []
 
     for emp in employees:
         stored_list = emp.get("embeddings", [])
         if not stored_list:
             continue
-
         emp_best = 0.0
         for raw in stored_list:
             stored = str_to_emb(raw)
             if use_arcface and _is_arcface_emb(stored):
                 score = cosine_sim(embedding, stored)
-            elif not use_arcface and len(stored) == LBP_EMB_SIZE:
+            elif use_mediapipe and _is_mp_emb(stored):
+                score = cosine_sim(embedding, stored)
+            elif not use_arcface and not use_mediapipe and len(stored) == LBP_EMB_SIZE:
                 score = chi_square_sim(embedding, stored)
-            elif not use_arcface and len(stored) == LEGACY_EMB_SIZE:
+            elif not use_arcface and not use_mediapipe and len(stored) == LEGACY_EMB_SIZE:
                 score = cosine_sim(embedding, stored)
             else:
                 continue
             if score > emp_best:
                 emp_best = score
-
         if emp_best > 0:
             all_candidates.append((emp_best, emp.get("name", ""), emp.get("id", "")))
             if emp_best > best_score:
@@ -420,7 +517,12 @@ def compare_with_all_employees(embedding: np.ndarray, use_arcface: bool = False)
 
     all_candidates.sort(reverse=True)
 
-    threshold = ARCFACE_THRESHOLD if use_arcface else LBP_THRESHOLD
+    if use_arcface:
+        threshold = ARCFACE_THRESHOLD
+    elif use_mediapipe:
+        threshold = MP_THRESHOLD
+    else:
+        threshold = LBP_THRESHOLD
 
     # Ambiguity guard
     if len(all_candidates) >= 2:
@@ -616,7 +718,7 @@ async def register_employee(req: RegisterRequest):
                 continue
 
             if INSIGHTFACE_AVAILABLE:
-                # ── ArcFace path ──
+                # ── Tier 1: ArcFace ──
                 faces = arcface_process(img)
                 for emb, quality, bbox in faces:
                     if quality < 0.15:
@@ -629,9 +731,22 @@ async def register_employee(req: RegisterRequest):
                     face_path = FACES_DIR / f"{req.employee_id}_{i}.jpg"
                     cv2.imwrite(str(face_path), face_crop)
                     face_images_saved.append(str(face_path))
-                    break  # one face per photo
+                    break
+            elif MEDIAPIPE_AVAILABLE:
+                # ── Tier 2: MediaPipe geometric ──
+                mp_faces = mediapipe_process(img)
+                for emb, quality, bbox in mp_faces:
+                    if quality < 0.15:
+                        rejected += 1
+                        continue
+                    embeddings.append(emb_to_str(emb.tolist()))
+                    x,y,w,h = bbox
+                    face_path = FACES_DIR / f"{req.employee_id}_{i}.jpg"
+                    cv2.imwrite(str(face_path), img[y:y+h, x:x+w])
+                    face_images_saved.append(str(face_path))
+                    break
             else:
-                # ── LBP fallback ──
+                # ── Tier 3: LBP fallback ──
                 faces, gray = _lbp_detect(img)
                 if len(faces) == 0:
                     continue
@@ -654,7 +769,7 @@ async def register_employee(req: RegisterRequest):
                    "Please retake photos in good lighting, facing the camera."
         )
 
-    method = "ArcFace" if INSIGHTFACE_AVAILABLE else "LBP"
+    method = "ArcFace" if INSIGHTFACE_AVAILABLE else ("MediaPipe" if MEDIAPIPE_AVAILABLE else "LBP")
     emp_data = {
         "id": req.employee_id,
         "name": req.name,
@@ -873,46 +988,87 @@ async def scan_face(req: ScanRequest):
                 break  # process only the largest/first face per scan
 
         else:
-            # ══ LBP fallback path ══
-            faces, gray = _lbp_detect(img)
-            if len(faces) == 0:
-                return {"success": False, "message": "No face detected. Please position your face in the camera.", "detected": False}
+            # ══ Tier 2: MediaPipe geometric matching ══
+            mp_faces = mediapipe_process(img) if MEDIAPIPE_AVAILABLE else []
 
-            for face_rect in faces:
-                emb = _lbp_embed(gray, face_rect)
-                matched_id, score, candidates = compare_with_all_employees(emb, use_arcface=False)
-                conf = round(score * 100, 1)
-
-                if matched_id:
-                    emp = get_employee(matched_id)
-                    today_recs = get_employee_today_records(matched_id, today)
-                    today_recs.sort(key=lambda r: r.get("timestamp", ""))
-
-                    if not today_recs:
-                        rec_id = str(uuid.uuid4())
-                        set_attendance_record(rec_id, {
-                            "id": rec_id, "employee_id": matched_id, "name": emp["name"],
-                            "department": emp["department"], "date": today,
-                            "check_in": t, "check_out": None, "check_in_2": None,
-                            "check_out_3": None, "check_in_3": None, "check_out_2": None,
-                            "status": "present", "confidence": conf, "timestamp": now.isoformat()
-                        })
-                        results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in", "punch": 1, "time": t, "confidence": conf})
+            if mp_faces:
+                for emb, quality, bbox in mp_faces:
+                    if quality < 0.10:
+                        results.append({"action": "low_quality", "message": "Image too blurry or dark.", "confidence": 0})
+                        continue
+                    matched_id, score, candidates = compare_with_all_employees(emb, use_mediapipe=True)
+                    conf = round(min(score / MP_THRESHOLD, 1.0) * 100, 1)
+                    if matched_id:
+                        emp = get_employee(matched_id)
+                        today_recs = get_employee_today_records(matched_id, today)
+                        today_recs.sort(key=lambda r: r.get("timestamp", ""))
+                        if score > MP_AUTO_UPDATE:
+                            auto_update_face_profile(matched_id, emb, score)
+                        if not today_recs:
+                            rec_id = str(uuid.uuid4())
+                            set_attendance_record(rec_id, {
+                                "id": rec_id, "employee_id": matched_id, "name": emp["name"],
+                                "department": emp["department"], "date": today,
+                                "check_in": t, "check_out": None, "check_in_2": None,
+                                "check_out_3": None, "check_in_3": None, "check_out_2": None,
+                                "status": "present", "confidence": conf, "timestamp": now.isoformat()
+                            })
+                            results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in", "punch": 1, "time": t, "confidence": conf})
+                        else:
+                            rec = today_recs[-1]; rid = rec["id"]
+                            if   rec.get("check_out")  is None: update_attendance_record(rid, {"check_out":  t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out",  "punch": 2, "time": t, "confidence": conf})
+                            elif rec.get("check_in_2") is None: update_attendance_record(rid, {"check_in_2": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2", "punch": 3, "time": t, "confidence": conf})
+                            elif rec.get("check_out_3")is None: update_attendance_record(rid, {"check_out_3":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_3","punch": 4, "time": t, "confidence": conf})
+                            elif rec.get("check_in_3") is None: update_attendance_record(rid, {"check_in_3": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_3", "punch": 5, "time": t, "confidence": conf})
+                            elif rec.get("check_out_2")is None: update_attendance_record(rid, {"check_out_2":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2","punch": 6, "time": t, "confidence": conf})
+                            else: results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 6 punches complete for today", "confidence": conf})
                     else:
-                        rec = today_recs[-1]
-                        rid = rec["id"]
-                        if   rec.get("check_out")  is None: update_attendance_record(rid, {"check_out":  t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out",  "punch": 2, "time": t, "confidence": conf})
-                        elif rec.get("check_in_2") is None: update_attendance_record(rid, {"check_in_2": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2", "punch": 3, "time": t, "confidence": conf})
-                        elif rec.get("check_out_3")is None: update_attendance_record(rid, {"check_out_3":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_3","punch": 4, "time": t, "confidence": conf})
-                        elif rec.get("check_in_3") is None: update_attendance_record(rid, {"check_in_3": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_3", "punch": 5, "time": t, "confidence": conf})
-                        elif rec.get("check_out_2")is None: update_attendance_record(rid, {"check_out_2":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2","punch": 6, "time": t, "confidence": conf})
-                        else: results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 6 punches complete for today", "confidence": conf})
-                else:
-                    top = candidates[0] if candidates else None
-                    results.append({"employee_id": None, "action": "unknown", "confidence": conf,
-                                    "message": f"Face not recognized (best: {top[1] if top else 'none'} @ {round(top[0]*100,1) if top else 0}% — need ≥{round(LBP_THRESHOLD*100)}%)"})
+                        top = candidates[0] if candidates else None
+                        results.append({"employee_id": None, "action": "unknown", "confidence": conf,
+                                        "message": f"Face not recognized (best: {top[1] if top else 'none'} @ {round(top[0]*100,1) if top else 0}% — need ≥{round(MP_THRESHOLD*100)}%)"})
+                    break
 
+
+            else:
+                # ══ Tier 3: LBP fallback ══
+                faces, gray = _lbp_detect(img)
+                if len(faces) == 0:
+                    return {"success": False, "message": "No face detected. Please position your face in the camera.", "detected": False}
+                for face_rect in faces:
+                    emb = _lbp_embed(gray, face_rect)
+                    matched_id, score, candidates = compare_with_all_employees(emb, use_arcface=False)
+                    conf = round(score * 100, 1)
+                    if matched_id:
+                        emp = get_employee(matched_id)
+                        today_recs = get_employee_today_records(matched_id, today)
+                        today_recs.sort(key=lambda r: r.get("timestamp", ""))
+                        if not today_recs:
+                            rec_id = str(uuid.uuid4())
+                            set_attendance_record(rec_id, {
+                                "id": rec_id, "employee_id": matched_id, "name": emp["name"],
+                                "department": emp["department"], "date": today,
+                                "check_in": t, "check_out": None, "check_in_2": None,
+                                "check_out_3": None, "check_in_3": None, "check_out_2": None,
+                                "status": "present", "confidence": conf, "timestamp": now.isoformat()
+                            })
+                            results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in", "punch": 1, "time": t, "confidence": conf})
+                        else:
+                            rec = today_recs[-1]; rid = rec["id"]
+                            if   rec.get("check_out")  is None: update_attendance_record(rid, {"check_out":  t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out",  "punch": 2, "time": t, "confidence": conf})
+                            elif rec.get("check_in_2") is None: update_attendance_record(rid, {"check_in_2": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_2", "punch": 3, "time": t, "confidence": conf})
+                            elif rec.get("check_out_3")is None: update_attendance_record(rid, {"check_out_3":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_3","punch": 4, "time": t, "confidence": conf})
+                            elif rec.get("check_in_3") is None: update_attendance_record(rid, {"check_in_3": t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_in_3", "punch": 5, "time": t, "confidence": conf})
+                            elif rec.get("check_out_2")is None: update_attendance_record(rid, {"check_out_2":t}); results.append({"employee_id": matched_id, "name": emp["name"], "action": "check_out_2","punch": 6, "time": t, "confidence": conf})
+                            else: results.append({"employee_id": matched_id, "name": emp["name"], "action": "already_complete", "punch": 0, "message": "All 6 punches complete for today", "confidence": conf})
+                    else:
+                        top = candidates[0] if candidates else None
+                        results.append({"employee_id": None, "action": "unknown", "confidence": conf,
+                                        "message": f"Face not recognized (best: {top[1] if top else 'none'} @ {round(top[0]*100,1) if top else 0}% — need ≥{round(LBP_THRESHOLD*100)}%)"})
+
+        if not results:
+            return {"success": False, "message": "No face detected. Please position your face in the camera.", "detected": False}
         return {"success": True, "detected": True, "results": results, "face_count": 1}
+
 
     except Exception as e:
         logger.error(f"Scan error: {e}")

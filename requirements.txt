@@ -10,7 +10,10 @@ numpy>=1.26.4,<2.0.0
 # ── Firebase ───────────────────────────────────────────────────────────────
 firebase-admin==7.4.0
 
-# ── Face Recognition ───────────────────────────────────────────────────────
-# NOTE: TensorFlow/DeepFace (ArcFace) requires >512MB RAM — exceeds Render free tier.
-# App automatically falls back to LBP histogram matching when deepface is not available.
-# To enable ArcFace on a paid plan (≥1GB RAM), add: deepface==0.0.93 tf-keras==2.19.0 tensorflow-cpu==2.19.0
+# ── Face Recognition — Tier 1 (free tier, ~150MB RAM) ─────────────────────
+# MediaPipe: Google's lightweight face mesh — 468 landmarks, runs on CPU.
+# Used as primary recognizer when TensorFlow/DeepFace is not available.
+mediapipe>=0.10.14,<1.0.0
+
+# ── Face Recognition — Tier 2 (paid plan ≥1GB RAM only) ──────────────────
+# To enable ArcFace on paid Render plan: add deepface==0.0.93 tf-keras==2.19.0 tensorflow-cpu==2.19.0
